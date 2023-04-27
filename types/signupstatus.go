@@ -3,6 +3,7 @@ package types
 type SignupStatus string
 
 const (
+	SignupStatusNone    SignupStatus = ""
 	SignupStatusNew     SignupStatus = "NEW"
 	SignupStatusOnHold  SignupStatus = "HOLD"
 	SignupStatusPay     SignupStatus = "PAY"

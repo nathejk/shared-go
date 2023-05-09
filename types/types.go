@@ -60,6 +60,9 @@ type Email string
 type PingType string
 
 const (
-	PingTypeSignup        PingType = "signup"
-	PingTypeMobilepayLink PingType = "mobilepay"
+	PingTypeSignup          PingType = "signup"
+	PingTypeMobilepayLink   PingType = "mobilepay"
+	PingTypePaymentReceived PingType = "payment"
+	PingTypeWelcome         PingType = "welcome"
+	PingTypeTeamUpdated     PingType = "teamupdate"
 )

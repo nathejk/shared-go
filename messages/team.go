@@ -20,15 +20,6 @@ type NathejkSignupPincodeUsed struct {
 	Pincode string            `json:"pincode"`
 }
 
-// nathejk:sms.sent
-type NathejkSmsSent struct {
-	PingType types.PingType    `json:"pingType"`
-	TeamID   types.TeamID      `json:"teamId,omitempty"`
-	Phone    types.PhoneNumber `json:"phone"`
-	Text     string            `json:"text"`
-	Error    string            `json:"error,omitempty"`
-}
-
 // nathejk:team.updated
 type NathejkTeamUpdated struct {
 	TeamID            types.TeamID      `json:"teamId"`

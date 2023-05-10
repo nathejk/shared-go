@@ -55,7 +55,7 @@ func (id UserID) IsSlackUser() bool {
 	return strings.HasPrefix(string(id), "slack-")
 }
 
-type Email string
+type Email string // deprecated
 
 type PingType string
 

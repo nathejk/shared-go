@@ -11,5 +11,5 @@ var (
 type EmailAddress string
 
 func (m EmailAddress) Valid() bool {
-	return emailRX.MatchString(m)
+	return emailRX.MatchString(string(m))
 }

@@ -17,12 +17,12 @@ type NathejkSmsSent struct {
 
 // nathejk:mail.sent
 type NathejkMailSent struct {
-	PingType  types.PingType `json:"pingType"`
-	TeamID    types.TeamID   `json:"teamId,omitempty"`
-	MemberID  types.MemberID `json:"memberId,omitempty"`
-	MessageID string         `json:"messageId"`
-	Recipient types.Email    `json:"recipient"`
-	Subject   string         `json:"subject"`
-	Timestamp time.Time      `json:"timestamp"`
-	Error     string         `json:"error,omitempty"`
+	PingType  types.PingType     `json:"pingType"`
+	TeamID    types.TeamID       `json:"teamId,omitempty"`
+	MemberID  types.MemberID     `json:"memberId,omitempty"`
+	MessageID string             `json:"messageId"`
+	Recipient types.EmailAddress `json:"recipient"`
+	Subject   string             `json:"subject"`
+	Timestamp time.Time          `json:"timestamp"`
+	Error     string             `json:"error,omitempty"`
 }

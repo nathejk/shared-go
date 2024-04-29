@@ -13,3 +13,7 @@ type EmailAddress string
 func (m EmailAddress) Valid() bool {
 	return emailRX.MatchString(string(m))
 }
+
+func (m EmailAddress) String() string {
+	return string(m)
+}

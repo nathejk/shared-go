@@ -7,10 +7,17 @@ type NathejkTeamSignedUp struct {
 	TeamID types.TeamID `json:"teamId"`
 	//	Type   types.Enum   `json:"type"`
 	//	Slug    string            `json:"slug"`
-	Name    string            `json:"name"`
-	Phone   types.PhoneNumber `json:"phone"`
-	Email   types.Email       `json:"email"`
-	Pincode string            `json:"pincode"`
+	Name    string             `json:"name"`
+	Phone   types.PhoneNumber  `json:"phone"`
+	Email   types.EmailAddress `json:"email"`
+	Pincode string             `json:"pincode"`
+}
+
+// nathejk:phonenumber.confirmed
+type NathejkSignupEmailLinkClicked struct {
+	TeamID types.TeamID       `json:"teamId"`
+	Email  types.EmailAddress `json:"email"`
+	Secret string             `json:"secret"`
 }
 
 // nathejk:phonenumber.confirmed
@@ -22,18 +29,18 @@ type NathejkSignupPincodeUsed struct {
 
 // nathejk:team.updated
 type NathejkTeamUpdated struct {
-	TeamID            types.TeamID      `json:"teamId"`
-	Type              types.Enum        `json:"type"`
-	Name              string            `json:"name"`
-	GroupName         string            `json:"groupName"`
-	Korps             string            `json:"korps"`
-	AdvspejdNumber    string            `json:"advspejdNumber,omitempty"`
-	ContactName       string            `json:"contactName"`
-	ContactAddress    string            `json:"contactAddress,omitempty"`
-	ContactPostalCode string            `json:"contactPostalCode,omitempty"`
-	ContactEmail      types.Email       `json:"contactEmail"`
-	ContactPhone      types.PhoneNumber `json:"contactPhone"`
-	ContactRole       string            `json:"contactRole"`
+	TeamID            types.TeamID       `json:"teamId"`
+	Type              types.TeamType     `json:"type"`
+	Name              string             `json:"name"`
+	GroupName         string             `json:"groupName"`
+	Korps             string             `json:"korps"`
+	AdvspejdNumber    string             `json:"advspejdNumber,omitempty"`
+	ContactName       string             `json:"contactName"`
+	ContactAddress    string             `json:"contactAddress,omitempty"`
+	ContactPostalCode string             `json:"contactPostalCode,omitempty"`
+	ContactEmail      types.EmailAddress `json:"contactEmail"`
+	ContactPhone      types.PhoneNumber  `json:"contactPhone"`
+	ContactRole       string             `json:"contactRole"`
 }
 
 // nathejk:klan.updated
@@ -77,13 +84,13 @@ type NathejkPatrolDeleted struct {
 }
 
 type NathejkPatrolContactUpdated struct {
-	TeamID     types.TeamID      `json:"teamId"`
-	Name       string            `json:"name"`
-	Address    string            `json:"address"`
-	PostalCode string            `json:"postalCode"`
-	Email      types.Email       `json:"email"`
-	Phone      types.PhoneNumber `json:"phone"`
-	Role       string            `json:"role"`
+	TeamID     types.TeamID       `json:"teamId"`
+	Name       string             `json:"name"`
+	Address    string             `json:"address"`
+	PostalCode string             `json:"postalCode"`
+	Email      types.EmailAddress `json:"email"`
+	Phone      types.PhoneNumber  `json:"phone"`
+	Role       string             `json:"role"`
 }
 
 type NathejkPatrolNumberAssigned struct {

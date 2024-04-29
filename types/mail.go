@@ -1,17 +1,17 @@
 package types
 
 type MailTemplateData_Contact struct {
-	Name  string      `json:"navn"`
-	Phone PhoneNumber `json:"telefon"`
-	Email Email       `json:"email"`
-	Role  string      `json:"rolle"`
+	Name  string       `json:"navn"`
+	Phone PhoneNumber  `json:"telefon"`
+	Email EmailAddress `json:"email"`
+	Role  string       `json:"rolle"`
 }
 type MailTemplateData_Member struct {
 	Name        string
 	Address     string
 	PostalCode  string
 	City        string
-	Email       Email
+	Email       EmailAddress
 	Phone       PhoneNumber
 	PhoneParent PhoneNumber
 	Birthday    Date

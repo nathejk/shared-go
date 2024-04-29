@@ -4,17 +4,17 @@ import "github.com/nathejk/shared-go/types"
 
 // nathejk:member.updated
 type NathejkMemberUpdated struct {
-	MemberID    types.MemberID    `json:"memberId"`
-	TeamID      types.TeamID      `json:"teamId"`
-	Name        string            `json:"name"`
-	Address     string            `json:"address"`
-	PostalCode  string            `json:"postalCode"`
-	City        string            `json:"city"`
-	Email       types.Email       `json:"mail"`
-	Phone       types.PhoneNumber `json:"phone"`
-	PhoneParent types.PhoneNumber `json:"phoneParent,omitempty"`
-	Birthday    types.Date        `json:"birthday"`
-	Returning   bool              `json:"returning"`
+	MemberID    types.MemberID     `json:"memberId"`
+	TeamID      types.TeamID       `json:"teamId"`
+	Name        string             `json:"name"`
+	Address     string             `json:"address"`
+	PostalCode  string             `json:"postalCode"`
+	City        string             `json:"city"`
+	Email       types.EmailAddress `json:"mail"`
+	Phone       types.PhoneNumber  `json:"phone"`
+	PhoneParent types.PhoneNumber  `json:"phoneParent,omitempty"`
+	Birthday    types.Date         `json:"birthday"`
+	Returning   bool               `json:"returning"`
 }
 
 // nathejk:member.deleted
@@ -24,17 +24,32 @@ type NathejkMemberDeleted struct {
 }
 
 type NathejkScoutCreated struct {
-	MemberID     types.MemberID    `json:"memberId"`
-	TeamID       types.TeamID      `json:"teamId"`
-	Name         string            `json:"name"`
-	Address      string            `json:"address"`
-	PostalCode   string            `json:"postalCode"`
-	City         string            `json:"city"`
-	Email        types.Email       `json:"mail"`
-	Phone        types.PhoneNumber `json:"phone"`
-	PhoneContact types.PhoneNumber `json:"phoneContact"`
-	BirthDate    types.Date        `json:"birthDate"`
-	Returning    bool              `json:"returning"`
+	MemberID     types.MemberID     `json:"memberId"`
+	TeamID       types.TeamID       `json:"teamId"`
+	Name         string             `json:"name"`
+	Address      string             `json:"address"`
+	PostalCode   string             `json:"postalCode"`
+	City         string             `json:"city"`
+	Email        types.EmailAddress `json:"mail"`
+	Phone        types.PhoneNumber  `json:"phone"`
+	PhoneContact types.PhoneNumber  `json:"phoneContact"`
+	BirthDate    types.Date         `json:"birthDate"`
+	Returning    bool               `json:"returning"`
+	TShirtSize   string             `json:"tshirtsize"`
+}
+type NathejkSeniorUpdated struct {
+	MemberID   types.MemberID     `json:"memberId"`
+	TeamID     types.TeamID       `json:"teamId"`
+	Name       string             `json:"name"`
+	Address    string             `json:"address"`
+	PostalCode string             `json:"postalCode"`
+	City       string             `json:"city"`
+	Email      types.EmailAddress `json:"mail"`
+	Phone      types.PhoneNumber  `json:"phone"`
+	BirthDate  types.Date         `json:"birthDate"`
+	Returning  bool               `json:"returning"`
+	TShirtSize string             `json:"tshirtsize"`
+	Diet       string             `json:"diet"`
 }
 
 type NathejkScoutUpdated NathejkScoutCreated
@@ -42,5 +57,5 @@ type NathejkScoutUpdated NathejkScoutCreated
 type NathejkScoutDeleted struct {
 	MemberID   types.MemberID `json:"memberId"`
 	TeamID     types.TeamID   `json:"teamId"`
-	DeletedUts string         `json:"deletedUts"`
+	DeletedUts string         `json:"deletedUts,omitempty"`
 }

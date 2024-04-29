@@ -12,6 +12,7 @@ type NathejkSmsSent struct {
 	TeamID   types.TeamID      `json:"teamId,omitempty"`
 	Phone    types.PhoneNumber `json:"phone"`
 	Text     string            `json:"text"`
+	Secret   string            `json:"secret,omitempty"`
 	Error    string            `json:"error,omitempty"`
 }
 
@@ -24,5 +25,6 @@ type NathejkMailSent struct {
 	Recipient types.EmailAddress `json:"recipient"`
 	Subject   string             `json:"subject"`
 	Timestamp time.Time          `json:"timestamp"`
+	Secret    string             `json:"secret,omitempty"`
 	Error     string             `json:"error,omitempty"`
 }

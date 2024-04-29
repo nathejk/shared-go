@@ -55,14 +55,14 @@ func (id UserID) IsSlackUser() bool {
 	return strings.HasPrefix(string(id), "slack-")
 }
 
-type Email string // deprecated
-
 type PingType string
 
 const (
+	PingTypeValidate        PingType = "validate"
 	PingTypeSignup          PingType = "signup"
 	PingTypeMobilepayLink   PingType = "mobilepay"
 	PingTypePaymentReceived PingType = "payment"
 	PingTypeWelcome         PingType = "welcome"
 	PingTypeTeamUpdated     PingType = "teamupdate"
+	PingTypeInfo            PingType = "info"
 )

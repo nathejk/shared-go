@@ -18,16 +18,16 @@ type NathejkUserDeleted struct {
 
 // nathejk:personnel.updated
 type NathejkPersonnelUpdated struct {
-	UserID     types.UserID      `json:"userId"`
-	Name       string            `json:"name"`
-	Phone      types.PhoneNumber `json:"phone"`
-	Email      types.Email       `json:"email"`
-	HqAccess   bool              `json:"hqAccess"`
-	Pincode    string            `json:"pincode"`
-	Department string            `json:"department"`
-	MedlemNr   string            `json:"medlemnr"`
-	Corps      types.CorpsSlug   `json:"corps"`
-	Diet       string            `json:"diet"`
+	UserID     types.UserID       `json:"userId"`
+	Name       string             `json:"name"`
+	Phone      types.PhoneNumber  `json:"phone"`
+	Email      types.EmailAddress `json:"email"`
+	HqAccess   bool               `json:"hqAccess"`
+	Pincode    string             `json:"pincode"`
+	Department string             `json:"department"`
+	MedlemNr   string             `json:"medlemnr"`
+	Corps      types.CorpsSlug    `json:"corps"`
+	Diet       string             `json:"diet"`
 }
 
 type NathejkPersonnelCreated struct {

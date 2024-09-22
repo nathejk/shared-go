@@ -31,6 +31,7 @@ func (ID MemberID) New() MemberID {
 	return MemberID("member-" + uuid.New().String())
 }
 
+type QrID ID
 type ScanID ID
 type AttachmentID ID
 type LegacyID ID

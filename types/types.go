@@ -19,6 +19,8 @@ type Enum = string
  * Patrol: a unit of six to eight Scouts or Guides forming part of a troop.
  */
 
+type YearSlug Slug
+
 type TeamID ID
 
 func (t TeamID) New() TeamID {

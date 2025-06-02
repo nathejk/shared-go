@@ -14,16 +14,16 @@ type NathejkPayment_OrderLine struct {
 }
 
 type NathejkPaymentRequested struct {
-	Reference    string                     `json:"reference"`
-	ReturnUrl    string                     `json:"returnUrl"`
-	ReceiptEmail types.EmailAddress         `json:"receiptEmail"`
-	Amount       int                        `json:"amount"`
-	Currency     string                     `json:"currency"`
-	Timestamp    time.Time                  `json:"timestamp"`
-	Method       string                     `json:"method"`
-	OrderLines   []NathejkPayment_OrderLine `json:"orderLines,omitempty"`
-	//TeamID     types.TeamID               `json:"teamId,omitempty"`
-	//MemberID   types.MemberID             `json:"memberId,omitempty"`
+	Reference       string                     `json:"reference"`
+	ReturnUrl       string                     `json:"returnUrl"`
+	ReceiptEmail    types.EmailAddress         `json:"receiptEmail"`
+	Amount          int                        `json:"amount"`
+	Currency        string                     `json:"currency"`
+	Timestamp       time.Time                  `json:"timestamp"`
+	Method          string                     `json:"method"`
+	OrderLines      []NathejkPayment_OrderLine `json:"orderLines,omitempty"`
+	OrderForeignKey string                     `json:"orderForeignKey,omitempty"`
+	OrderType       string                     `json:"orderType,omitempty"`
 }
 
 type NathejkPaymentReserved struct {

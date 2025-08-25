@@ -50,6 +50,10 @@ type NathejkKlanUpdated struct {
 	GroupName string       `json:"groupName"`
 	Korps     string       `json:"korps"`
 }
+type NathejkKlanAssigned struct {
+	TeamID types.TeamID `json:"teamId"`
+	Lok    string       `json:"lok"`
+}
 
 type NathejkTeamStatusChanged struct {
 	TeamID types.TeamID       `json:"teamId"`

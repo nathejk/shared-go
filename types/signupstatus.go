@@ -3,13 +3,14 @@ package types
 type SignupStatus string
 
 const (
-	SignupStatusNone    SignupStatus = ""
-	SignupStatusNew     SignupStatus = "NEW"
-	SignupStatusOnHold  SignupStatus = "HOLD"
-	SignupStatusPay     SignupStatus = "PAY"
-	SignupStatusPaid    SignupStatus = "PAID"
-	SignupStatusStarted SignupStatus = "STARTED"
-	SignupStatusOut     SignupStatus = "OUT"
+	SignupStatusNone     SignupStatus = ""
+	SignupStatusNew      SignupStatus = "NEW"
+	SignupStatusOnHold   SignupStatus = "HOLD"
+	SignupStatusPay      SignupStatus = "PAY"
+	SignupStatusSemipaid SignupStatus = "SEMIPAID"
+	SignupStatusPaid     SignupStatus = "PAID"
+	SignupStatusStarted  SignupStatus = "STARTED"
+	SignupStatusOut      SignupStatus = "OUT"
 )
 
 type TeamType string

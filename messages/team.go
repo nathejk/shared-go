@@ -43,6 +43,17 @@ type NathejkTeamUpdated struct {
 	ContactRole       string             `json:"contactRole"`
 }
 
+type NathejkTeamStarted_Member struct {
+	MemberID      types.MemberID    `json:"memberId"`
+	Phone         types.PhoneNumber `json:"phone"`
+	PhoneGuardian types.PhoneNumber `json:"phoneGuardian"`
+}
+
+type NathejkTeamStarted struct {
+	TeamID  types.TeamID                `json:"teamId"`
+	Members []NathejkTeamStarted_Member `json:"members"`
+}
+
 // nathejk:klan.updated
 type NathejkKlanUpdated struct {
 	TeamID    types.TeamID `json:"teamId"`

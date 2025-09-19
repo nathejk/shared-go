@@ -31,6 +31,7 @@ type QrID ID
 type ScanID ID
 type AttachmentID ID
 type LegacyID ID
+type SosID ID
 
 func (ID LegacyID) Checksum() string {
 	// PHP: return substr(md5($this->id . '**@'), -5);

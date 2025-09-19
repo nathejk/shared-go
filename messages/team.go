@@ -125,3 +125,16 @@ type NathejkSquadCreated struct {
 	GroupName string       `json:"groupName"`
 	Corps     string       `json:"korps"`
 }
+
+// nathejk:team.merged
+type NathejkTeamMerged struct {
+	TeamID       types.TeamID `json:"teamId"`
+	ParentTeamID types.TeamID `json:"parentTeamId"`
+	SosID        types.SosID  `json:"sosId,omitempty"`
+}
+
+// nathejk:team.splitedd
+type NathejkTeamSplited struct {
+	TeamID types.TeamID `json:"teamId"`
+	SosID  types.SosID  `json:"sosId,omitempty"`
+}

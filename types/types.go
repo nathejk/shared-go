@@ -21,12 +21,6 @@ type Enum = string
 
 type YearSlug Slug
 
-type TeamID ID
-
-func (t TeamID) New() TeamID {
-	return TeamID("team-" + uuid.New().String())
-}
-
 type MemberID ID
 
 func (ID MemberID) New() MemberID {

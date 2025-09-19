@@ -49,3 +49,38 @@ func (ids TeamIDs) Diff(slices ...TeamIDs) TeamIDs {
 	}
 	return diff
 }
+
+func UniqueTeamID(teamIDs []TeamID) []TeamID {
+	keys := make(map[TeamID]bool)
+	list := []TeamID{}
+	for _, entry := range teamIDs {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
+}
+
+func DiffTeamID(slice1 TeamIDs, slices ...TeamIDs) TeamIDs {
+	diff := TeamIDs{}
+
+	// Loop two times, first to find slice1 strings not in slice2,
+	// second loop to find slice2 strings not in slice1
+	//	for i := 0; i < 2; i++ {
+	for _, id := range slice1 {
+		found := false
+		for _, slice := range slices {
+			if slice.Exists(id) {
+				found = true
+				break
+			}
+		}
+		// String not found. We add it to return slice
+		if !found {
+			diff = append(diff, id)
+		}
+	}
+
+	return diff
+}

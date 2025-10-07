@@ -15,3 +15,8 @@ type NathejkLokUpdated struct {
 type NathejkLokDeleted struct {
 	LokID types.LokID `json:"lokId"`
 }
+
+type NathejkLokArmNumberUpdated struct {
+	ArmNumber string         `json:"armNumber"`
+	Type      types.TeamType `json:"type"`
+}

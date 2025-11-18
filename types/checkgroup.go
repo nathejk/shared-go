@@ -1,10 +1,12 @@
 package types
 
 type ControlGroupID ID
-type CheckpointScheme string
+type CheckgroupID ID
+type CheckpointID ID
+type CheckgroupScheme string
 
 const (
-	CheckpointSchemeFixed    CheckpointScheme = "fixed"
-	CheckpointSchemeRelative CheckpointScheme = "relative"
-	CheckpointSchemeNone     CheckpointScheme = "none"
+	CheckgroupSchemeFixed    CheckgroupScheme = "fixed"
+	CheckgroupSchemeRelative CheckgroupScheme = "relative"
+	CheckgroupSchemeNone     CheckgroupScheme = "none"
 )

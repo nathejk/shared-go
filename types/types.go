@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -69,4 +70,9 @@ const (
 type Coordinate struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+}
+
+type TimeRange struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
 }

@@ -30,7 +30,42 @@ type NathejkControlGroup_Control struct {
 	Scanners             []NathejkControlGroup_Scanner `json:"scanners"`
 }
 
+type NathejkCheckpoint_Scanner struct {
+	UserID    types.UserID    `json:"userId"`
+	TimeRange types.TimeRange `json:"timeRange"`
+}
+type NathejkCheckgroup_Checkpoint struct {
+	CheckpointID         types.CheckpointID          `json:"checkpointId"`
+	Name                 string                      `json:"name"`
+	Address              string                      `json:"address,omitempty"`
+	Remark               string                      `json:"remark,omitempty"`
+	FixedTimeRange       *types.TimeRange            `json:"dateRange,omitempty"`
+	RelativeTimeDuration *time.Duration              `json:"relativeTimeDuration,omitempty"`
+	Position             *types.Coordinate           `json:"position,omitempty"`
+	Scanners             []NathejkCheckpoint_Scanner `json:"scanners"`
+}
+
 // nathejk:user.updated
+type NathejkCheckgroupUpdated struct {
+	CheckgroupID         types.CheckgroupID             `json:"checkgroupId"`
+	Name                 string                         `json:"name"`
+	ShowOnMap            bool                           `json:"showOnMap"`
+	Mandatory            bool                           `json:"mandatory"`
+	Scheme               types.CheckgroupScheme         `json:"scheme"`
+	RelativeCheckgroupID types.CheckgroupID             `json:"relativeCheckgroupID,omitempty"`
+	Checkpoints          []NathejkCheckgroup_Checkpoint `json:"controls"`
+}
+type NathejkCheckgroupSorted struct {
+	SortedCheckgroupIDs []types.CheckgroupID `json:"sortedCheckgroupIds"`
+}
+type NathejkCheckpointScansAccepted struct {
+	CheckpointID types.CheckpointID `json:"checkpointId"`
+	ScanIDs      []types.ScanID     `json:"scanIds"`
+}
+type NathejkCheckgroupDeleted struct {
+	CheckgroupID types.CheckgroupID `json:"checkgroupId"`
+}
+
 type NathejkControlGroupUpdated struct {
 	ControlGroupID types.ControlGroupID          `json:"controlGroupId"`
 	Name           string                        `json:"name"`

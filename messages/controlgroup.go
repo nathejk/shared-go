@@ -45,15 +45,34 @@ type NathejkCheckgroup_Checkpoint struct {
 	Scanners             []NathejkCheckpoint_Scanner `json:"scanners"`
 }
 
+type NathejkCheckpointScannerAdded struct {
+	UserID       types.UserID       `json:"userId"`
+	CheckpointID types.CheckpointID `json:"checkpointId"`
+	TimeRange    types.TimeRange    `json:"timeRange"`
+}
+type NathejkCheckpointScannerRemoved struct {
+	UserID       types.UserID       `json:"userId"`
+	CheckpointID types.CheckpointID `json:"checkpointId"`
+}
+type NathejkCheckpointUpdated struct {
+	CheckpointID         types.CheckpointID  `json:"checkpointId"`
+	CheckgroupID         *types.CheckgroupID `json:"checkgroupId,omitempty"`
+	Name                 *string             `json:"name,omitempty"`
+	Address              *string             `json:"address,omitempty"`
+	Remark               *string             `json:"remark,omitempty"`
+	FixedTimeRange       *types.TimeRange    `json:"dateRange,omitempty"`
+	RelativeTimeDuration *time.Duration      `json:"relativeTimeDuration,omitempty"`
+	Position             *types.Coordinate   `json:"position,omitempty"`
+}
+
 // nathejk:user.updated
 type NathejkCheckgroupUpdated struct {
-	CheckgroupID         types.CheckgroupID             `json:"checkgroupId"`
-	Name                 string                         `json:"name"`
-	ShowOnMap            bool                           `json:"showOnMap"`
-	Mandatory            bool                           `json:"mandatory"`
-	Scheme               types.CheckgroupScheme         `json:"scheme"`
-	RelativeCheckgroupID types.CheckgroupID             `json:"relativeCheckgroupID,omitempty"`
-	Checkpoints          []NathejkCheckgroup_Checkpoint `json:"controls"`
+	CheckgroupID         types.CheckgroupID      `json:"checkgroupId"`
+	Name                 *string                 `json:"name"`
+	ShowOnMap            *bool                   `json:"showOnMap"`
+	Mandatory            *bool                   `json:"mandatory"`
+	Scheme               *types.CheckgroupScheme `json:"scheme"`
+	RelativeCheckgroupID *types.CheckgroupID     `json:"relativeCheckgroupID,omitempty"`
 }
 type NathejkCheckgroupSorted struct {
 	SortedCheckgroupIDs []types.CheckgroupID `json:"sortedCheckgroupIds"`
@@ -62,8 +81,15 @@ type NathejkCheckpointScansAccepted struct {
 	CheckpointID types.CheckpointID `json:"checkpointId"`
 	ScanIDs      []types.ScanID     `json:"scanIds"`
 }
+type NathejkCheckpointScansRejected struct {
+	CheckpointID types.CheckpointID `json:"checkpointId"`
+	ScanIDs      []types.ScanID     `json:"scanIds"`
+}
 type NathejkCheckgroupDeleted struct {
 	CheckgroupID types.CheckgroupID `json:"checkgroupId"`
+}
+type NathejkCheckpointDeleted struct {
+	CheckpointID types.CheckpointID `json:"checkpointId"`
 }
 
 type NathejkControlGroupUpdated struct {

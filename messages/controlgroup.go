@@ -54,15 +54,22 @@ type NathejkCheckpointScannerRemoved struct {
 	UserID       types.UserID       `json:"userId"`
 	CheckpointID types.CheckpointID `json:"checkpointId"`
 }
+type NathejkCheckpointCreated struct {
+	CheckpointID types.CheckpointID `json:"checkpointId"`
+	CheckgroupID types.CheckgroupID `json:"checkgroupId"`
+}
 type NathejkCheckpointUpdated struct {
-	CheckpointID         types.CheckpointID  `json:"checkpointId"`
-	CheckgroupID         *types.CheckgroupID `json:"checkgroupId,omitempty"`
-	Name                 *string             `json:"name,omitempty"`
-	Address              *string             `json:"address,omitempty"`
-	Remark               *string             `json:"remark,omitempty"`
-	FixedTimeRange       *types.TimeRange    `json:"dateRange,omitempty"`
-	RelativeTimeDuration *time.Duration      `json:"relativeTimeDuration,omitempty"`
-	Position             *types.Coordinate   `json:"position,omitempty"`
+	CheckpointID         types.CheckpointID `json:"checkpointId"`
+	Name                 *string            `json:"name,omitempty"`
+	Address              *string            `json:"address,omitempty"`
+	Description          *string            `json:"description,omitempty"`
+	Remark               *string            `json:"remark,omitempty"`
+	FixedTimeRange       *types.TimeRange   `json:"dateRange,omitempty"`
+	RelativeTimeDuration *time.Duration     `json:"relativeTimeDuration,omitempty"`
+	Position             *types.Coordinate  `json:"position,omitempty"`
+}
+type NathejkCheckpointsSorted struct {
+	SortedCheckpointIDs []types.CheckpointID `json:"sortedCheckpointIds"`
 }
 
 // nathejk:user.updated
@@ -74,7 +81,7 @@ type NathejkCheckgroupUpdated struct {
 	Scheme               *types.CheckgroupScheme `json:"scheme"`
 	RelativeCheckgroupID *types.CheckgroupID     `json:"relativeCheckgroupID,omitempty"`
 }
-type NathejkCheckgroupSorted struct {
+type NathejkCheckgroupsSorted struct {
 	SortedCheckgroupIDs []types.CheckgroupID `json:"sortedCheckgroupIds"`
 }
 type NathejkCheckpointScansAccepted struct {

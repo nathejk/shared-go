@@ -27,6 +27,8 @@ func (h *MetadataRequestHeaders) Set(header http.Header) {
 
 type Metadata struct {
 	Producer            string                 `json:"producer"`
+	Version             string                 `json:"version,omitempty"`
+	UserID              types.UserID           `json:"userId,omitempty"`
 	Phase               string                 `json:"phase,omitempty"`
 	RequestHeaders      MetadataRequestHeaders `json:"requestHeaders,omitempty"`
 	CorrelationSequence uint64                 `json:"correlationSequence,omitempty"`

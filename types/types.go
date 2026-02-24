@@ -3,6 +3,7 @@ package types
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -12,7 +13,18 @@ import (
 
 type Sequence = uint64
 type ID = string
-type Slug = string
+type Slug string
+
+// slugRegexp matches:
+// - only lowercase letters, digits and single hyphens
+// - no leading or trailing hyphen
+// - no consecutive hyphens
+var slugRegexp = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+func (s Slug) Valid() bool {
+	return slugRegexp.MatchString(string(s))
+}
+
 type Enum = string
 
 /** Dictionary

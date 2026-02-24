@@ -34,6 +34,10 @@ type Enum = string
 
 type YearSlug Slug
 
+func (s YearSlug) Valid() bool {
+	return slugRegexp.MatchString(string(s))
+}
+
 type MemberID ID
 
 func (ID MemberID) New() MemberID {

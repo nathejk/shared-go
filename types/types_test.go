@@ -30,6 +30,7 @@ func TestMemberIDNewFunc(t *testing.T) {
 	assert.False(types.Slug("hello world").Valid(), "Spaces not allowed")
 	assert.False(types.Slug("æøå").Valid(), "Only latin1 characters allowed")
 
+	assert.True(types.YearSlug("test").Valid(), "Slug validation failed")
 	//ID := memberID.New()
 	//assert.Equal("  ", memberID, "Year calculation failed")
 	//assert.Equal(ID, memberID, "Year calculation failed")

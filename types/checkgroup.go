@@ -3,7 +3,7 @@ package types
 type ControlGroupID ID
 type CheckgroupID ID
 type CheckpointID ID
-type Checkpersonnel ID
+type CheckpersonnelID ID
 type CheckgroupScheme string
 
 const (

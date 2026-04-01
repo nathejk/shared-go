@@ -45,12 +45,12 @@ type NathejkCheckgroup_Checkpoint struct {
 	Scanners             []NathejkCheckpoint_Scanner `json:"scanners"`
 }
 
-type NathejkCheckpointScannerAdded struct {
+type NathejkCheckpersonnelAdded struct {
 	UserID       types.UserID       `json:"userId"`
 	CheckpointID types.CheckpointID `json:"checkpointId"`
-	TimeRange    types.TimeRange    `json:"timeRange"`
+	TimeRange    *types.TimeRange   `json:"timeRange,omitempty"`
 }
-type NathejkCheckpointScannerRemoved struct {
+type NathejkCheckpersonnelRemoved struct {
 	UserID       types.UserID       `json:"userId"`
 	CheckpointID types.CheckpointID `json:"checkpointId"`
 }

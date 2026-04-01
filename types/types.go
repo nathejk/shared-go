@@ -71,6 +71,13 @@ func (id UserID) IsSlackUser() bool {
 	return strings.HasPrefix(string(id), "slack-")
 }
 
+type UserType string
+
+const (
+	UserTypeJuggler UserType = "gøgler"
+	UserTypeCrew    UserType = "friend"
+)
+
 type PingType string
 
 const (

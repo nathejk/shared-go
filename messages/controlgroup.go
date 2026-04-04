@@ -54,6 +54,11 @@ type NathejkCheckpersonnelRemoved struct {
 	UserID       types.UserID       `json:"userId"`
 	CheckpointID types.CheckpointID `json:"checkpointId"`
 }
+type NathejkCheckpersonnelTimeSpecified struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+}
+
 type NathejkCheckpointCreated struct {
 	CheckpointID types.CheckpointID `json:"checkpointId"`
 	CheckgroupID types.CheckgroupID `json:"checkgroupId"`

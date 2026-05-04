@@ -4,24 +4,23 @@ import "github.com/nathejk/shared-go/types"
 
 // nathejk:signedup
 type NathejkTeamSignedUp struct {
-	TeamID types.TeamID `json:"teamId"`
-	//	Type   types.Enum   `json:"type"`
-	//	Slug    string            `json:"slug"`
+	TeamID  types.TeamID       `json:"teamId"`
 	Name    string             `json:"name"`
 	Phone   types.PhoneNumber  `json:"phone"`
 	Email   types.EmailAddress `json:"email"`
-	Pincode string             `json:"pincode"`
+	Secret  string             `json:"secret,omitempty"`
+	Pincode string             `json:"pincode,omitempty"`
 }
 
 // nathejk:phonenumber.confirmed
-type NathejkSignupEmailLinkClicked struct {
+type NathejkSignupEmailVerified struct {
 	TeamID types.TeamID       `json:"teamId"`
 	Email  types.EmailAddress `json:"email"`
 	Secret string             `json:"secret"`
 }
 
 // nathejk:phonenumber.confirmed
-type NathejkSignupPincodeUsed struct {
+type NathejkSignupPhoneVerified struct {
 	TeamID  types.TeamID      `json:"teamId"`
 	Phone   types.PhoneNumber `json:"phone"`
 	Pincode string            `json:"pincode"`

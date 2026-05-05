@@ -26,6 +26,11 @@ type NathejkSignupPhoneVerified struct {
 	Pincode string            `json:"pincode"`
 }
 
+type NathejkTeamMembersRequested struct {
+	TeamID      types.TeamID `json:"teamId"`
+	MemberCount int          `json:"memberCount"`
+}
+
 // nathejk:team.updated
 type NathejkTeamUpdated struct {
 	TeamID            types.TeamID       `json:"teamId"`

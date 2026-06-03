@@ -26,6 +26,18 @@ var CorpsLabels = map[CorpsSlug]string{
 	CorpsSlugOther: "Andet",
 }
 
-func (slug CorpsSlug) String() string {
+func (slug CorpsSlug) Label() string {
 	return CorpsLabels[slug]
+}
+
+type SlugLabel struct {
+	Slug  string `json:"slug"`
+	Label string `json:"label"`
+}
+
+func (list CorpsSlugList) AsObjects() (sl []SlugLabel) {
+	for _, slug := range list {
+		sl = append(sl, SlugLabel{Slug: string(slug), Label: slug.Label()})
+	}
+	return sl
 }

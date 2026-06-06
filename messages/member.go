@@ -7,13 +7,13 @@ type NathejkMemberUpdated struct {
 	MemberID    types.MemberID     `json:"memberId"`
 	TeamID      types.TeamID       `json:"teamId"`
 	Name        string             `json:"name"`
-	Address     string             `json:"address"`
-	PostalCode  string             `json:"postalCode"`
-	City        string             `json:"city"`
-	Email       types.EmailAddress `json:"mail"`
-	Phone       types.PhoneNumber  `json:"phone"`
+	Address     string             `json:"address,omitempty"`
+	PostalCode  string             `json:"postalCode,omitempty"`
+	City        string             `json:"city,omitempty"`
+	Email       types.EmailAddress `json:"mail,omitempty"`
+	Phone       types.PhoneNumber  `json:"phone,omitempty"`
 	PhoneParent types.PhoneNumber  `json:"phoneParent,omitempty"`
-	Birthday    types.Date         `json:"birthday"`
+	Birthday    types.Date         `json:"birthday,omitempty"`
 	Returning   bool               `json:"returning"`
 }
 
@@ -22,24 +22,26 @@ type NathejkMemberDeleted struct {
 	MemberID types.MemberID `json:"memberId"`
 	TeamID   types.TeamID   `json:"teamId"`
 }
+type NathejkMemberAdded struct {
+	MemberID types.MemberID `json:"memberId"`
+	TeamID   types.TeamID   `json:"teamId"`
+}
 
-type NathejkScoutCreated struct {
+type NathejkScoutUpdated struct {
 	MemberID     types.MemberID     `json:"memberId"`
-	TeamID       types.TeamID       `json:"teamId"`
-	Name         string             `json:"name"`
-	Address      string             `json:"address"`
-	PostalCode   string             `json:"postalCode"`
-	City         string             `json:"city"`
-	Email        types.EmailAddress `json:"mail"`
-	Phone        types.PhoneNumber  `json:"phone"`
-	PhoneContact types.PhoneNumber  `json:"phoneContact"`
-	BirthDate    types.Date         `json:"birthDate"`
+	Name         string             `json:"name,omitempty"`
+	Address      string             `json:"address,omitempty"`
+	PostalCode   string             `json:"postalCode,omitempty"`
+	City         string             `json:"city,omitempty"`
+	Email        types.EmailAddress `json:"mail,omitempty"`
+	Phone        types.PhoneNumber  `json:"phone,omitempty"`
+	PhoneContact types.PhoneNumber  `json:"phoneContact,omitempty"`
+	BirthDate    types.Date         `json:"birthDate,omitempty"`
 	Returning    bool               `json:"returning"`
-	TShirtSize   string             `json:"tshirtsize"`
+	TShirtSize   string             `json:"tshirtsize,omitempty"`
 }
 type NathejkSeniorUpdated struct {
 	MemberID   types.MemberID     `json:"memberId"`
-	TeamID     types.TeamID       `json:"teamId"`
 	Name       string             `json:"name"`
 	Address    string             `json:"address"`
 	PostalCode string             `json:"postalCode"`
@@ -51,8 +53,6 @@ type NathejkSeniorUpdated struct {
 	TShirtSize string             `json:"tshirtsize"`
 	Diet       string             `json:"diet"`
 }
-
-type NathejkScoutUpdated NathejkScoutCreated
 
 type NathejkScoutDeleted struct {
 	MemberID   types.MemberID `json:"memberId"`

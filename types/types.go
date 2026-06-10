@@ -75,7 +75,8 @@ type UserType string
 
 const (
 	UserTypeJuggler UserType = "gøgler"
-	UserTypeCrew    UserType = "friend"
+	UserTypeFriend  UserType = "friend"
+	UserTypeCrew    UserType = "crew"
 )
 
 type PingType string

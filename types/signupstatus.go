@@ -19,7 +19,7 @@ type TeamTypeList []TeamType
 const (
 	TeamTypePatrulje TeamType = "patrulje"
 	TeamTypeKlan     TeamType = "klan"
-	TeamTypeStaff    TeamType = "staff"
+	TeamTypeCrew     TeamType = "crew"
 	TeamTypeBadut    TeamType = "gøgler"
 	TeamTypePatrol   TeamType = "patrulje"
 	TeamTypeSquad    TeamType = "klan"
@@ -27,7 +27,7 @@ const (
 // TeamTypes        TeamTypeList = TeamTypeList{TeamTypePatrulje, TeamTypeKlan}
 )
 
-var TeamTypes = TeamTypeList{TeamTypePatrulje, TeamTypeKlan, TeamTypeStaff, TeamTypeBadut}
+var TeamTypes = TeamTypeList{TeamTypePatrulje, TeamTypeKlan, TeamTypeCrew, TeamTypeBadut}
 
 // type TeamTypes []TeamType
 func (l *TeamTypeList) Exists(t TeamType) bool {

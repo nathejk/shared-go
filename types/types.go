@@ -75,7 +75,6 @@ type UserType string
 
 const (
 	UserTypeJuggler UserType = "gøgler"
-	UserTypeFriend  UserType = "friend"
 	UserTypeCrew    UserType = "crew"
 )
 

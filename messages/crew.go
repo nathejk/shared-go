@@ -36,6 +36,10 @@ type NathejkSectionAdded struct {
 	Label             string     `json:"label"`
 }
 
+type NathejkSectionSorted struct {
+	Slugs []types.Slug `json:"slugs"`
+}
+
 type NathejkSectionDeleted struct {
 	Slug types.Slug `json:"slug"`
 }

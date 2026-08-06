@@ -2,7 +2,6 @@ package spejder
 
 import (
 	"log"
-	"time"
 
 	"github.com/jrgensen/cqrs"
 	"github.com/nathejk/shared-go/types"
@@ -10,20 +9,6 @@ import (
 	_ "embed"
 )
 
-type Spejder1 struct {
-	MemberID    types.MemberID
-	TeamID      types.TeamID
-	Name        string
-	Address     string
-	PostalCode  string
-	City        string
-	Email       types.EmailAddress
-	Phone       types.PhoneNumber
-	PhoneParent types.PhoneNumber
-	Birthday    types.Date
-	Returning   bool
-	Created     time.Time
-}
 type Spejder struct {
 	ID            types.MemberID     `json:"id"`
 	MemberID      types.MemberID     `json:"memberId"`

@@ -9,9 +9,19 @@ import (
 	"github.com/nathejk/shared-go/types"
 )
 
+// Queries is the read-only API of the spejder read model. Callers take this
+// interface rather than the concrete querier so they can be tested with a fake.
+// GetInactive is deliberately absent — see the note further down.
+type Queries interface {
+	GetByID(context.Context, types.MemberID) (*Spejder, error)
+	GetAll(context.Context, Filter) ([]*Spejder, Metadata, error)
+}
+
 type querier struct {
 	db cqrs.Reader
 }
+
+var _ Queries = querier{}
 
 func (q querier) GetByID(c context.Context, memberID types.MemberID) (*Spejder, error) {
 	return nil, nil
@@ -77,6 +87,13 @@ type SpejderStatus struct {
 	UpdatedAt time.Time
 }
 
+// GetInactive is disabled: it joins spejderstatus, a table no entity in this
+// module owns or projects — it is still maintained by a legacy projector in the
+// service repos, so a shared entity cannot rely on it being there. Re-enable it
+// once spejderstatus (or a status column on spejder) lives here.
+//
+// Note when reviving it: the query has two placeholders but passes four args.
+/*
 func (q querier) GetInactive(filters Filter) ([]*SpejderStatus, Metadata, error) {
 	// Create a context with a 3-second timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -115,3 +132,4 @@ WHERE (LOWER(s.year) = LOWER(?) OR ? = '')`
 
 	return sss, metadata, nil
 }
+*/

@@ -78,17 +78,6 @@ func (q Query) GetAll(teamID types.TeamID) ([]Payment, Metadata, error) {
 	metadata := Metadata{} //calculateMetadata(filters.Year, totalRecords, filters.Page, filters.PageSize)
 
 	return payments, metadata, nil
-	/*
-		_, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-
-		years := []*Year{
-			&Year{Slug: "2023", Name: "Nathejk 2024", Theme: "Ex Nihilo", CityDeparture: "Kalundborg", CityDestination: "Stenlille"},
-			&Year{Slug: "2022", Name: "Nathejk 2022", Theme: "Ufomania", CityDeparture: "Faxe", CityDestination: "Ringsted"},
-			&Year{Slug: "2021", Name: "Nathejk 2021", Theme: "Kong Etruds Sværd", CityDeparture: "Helsingør", CityDestination: "Hillerød"},
-		}
-		return years, Metadata{}, nil
-	*/
 }
 
 func (q Query) GetByReference(ref string) (*Payment, error) {
@@ -156,15 +145,6 @@ func (q Query) ConfirmBySecret(secret string) (types.TeamID, error) {
 	if err != nil {
 		return "", err
 	}
-	/*
-		rowCount, err := result.RowsAffected()
-		if err != nil {
-			return "", err
-		}
-		if rowCount != 1 {
-			return "", fmt.Errorf("e-mail not found")
-		}
-	*/
 	var teamID types.TeamID
 	err = q.DB.QueryRow(`SELECT teamId FROM confirm WHERE secret = ?`, secret).Scan(&teamID)
 	if err != nil {

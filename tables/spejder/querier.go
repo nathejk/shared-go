@@ -115,35 +115,3 @@ WHERE (LOWER(s.year) = LOWER(?) OR ? = '')`
 
 	return sss, metadata, nil
 }
-
-/*
-func (m TeamModel) GetSpejder(teamID types.TeamID) (*Patrulje, error) {
-	if len(teamID) == 0 {
-		return nil, ErrRecordNotFound
-	}
-
-	query := `SELECT p.teamId, p.teamNumber, p.name, p.groupName, p.korps, p.memberCount, IF(pm.parentTeamId IS NOT NULL, "JOIN", IF(startedUts > 0, "STARTED",  signupStatus))
-		FROM patrulje p
-		JOIN patruljestatus ps ON p.teamId = ps.teamID
-		LEFT JOIN patruljemerged pm ON p.teamId = pm.teamId
-		WHERE p.teamId = ?`
-	var p Patrulje
-	err := m.DB.QueryRow(query, teamID).Scan(
-		&p.ID,
-		&p.Number,
-		&p.Name,
-		&p.Group,
-		&p.Korps,
-		&p.MemberCount,
-		&p.Status,
-	)
-	if err != nil {
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			return nil, ErrRecordNotFound
-		default:
-			return nil, err
-		}
-	}
-	return &p, nil
-}*/

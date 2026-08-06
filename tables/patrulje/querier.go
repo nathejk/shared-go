@@ -118,31 +118,3 @@ func (q *querier) GetByID(ctx context.Context, teamID types.TeamID) (*Patrulje, 
 	}
 	return &p, nil
 }
-
-/*
-func (q *querier) GetContact(teamID types.TeamID) (*Contact, error) {
-	if len(teamID) == 0 {
-		return nil, tables.ErrRecordNotFound
-	}
-
-	query := `SELECT p.contactName, p.contactPhone, p.contactEmail, p.contactRole
-		FROM patrulje p
-		JOIN patruljestatus ps ON p.teamId = ps.teamID
-		WHERE p.teamId = ?`
-	c := Contact{TeamID: teamID}
-	err := q.db.QueryRow(query, teamID).Scan(
-		&c.Name,
-		&c.Phone,
-		&c.Email,
-		&c.Role,
-	)
-	if err != nil {
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			return nil, tables.ErrRecordNotFound
-		default:
-			return nil, err
-		}
-	}
-	return &c, nil
-}*/

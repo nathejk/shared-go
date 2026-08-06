@@ -25,16 +25,6 @@ type Klan struct {
 	Pincode              string             `json:"-"`
 }
 
-/*
-	type Klan2 struct {
-		TeamID       types.TeamID       `sql:"teamId"`
-		Year         string             `sql:"year"`
-		Name         string             `sql:"name"`
-		GroupName    string             `sql:"groupName"`
-		Korps        string             `sql:"korps"`
-		SignupStatus types.SignupStatus `sql:"signupStatus"`
-	}
-*/
 type table struct {
 	commander
 	consumer

@@ -25,7 +25,7 @@ func (q querier) GetAll(c context.Context, filters Filter) ([]*Spejder, Metadata
 	query := `Select
   s.memberId,
   s.teamId,
-  IF(ss.status IS NULL, IF(ps.startedUts > 0, 'started', 'paid'), ss.status) AS status,
+  IFNULL(ss.status, 'paid') AS status,
   name,
   address,
   postalCode,
@@ -37,7 +37,6 @@ func (q querier) GetAll(c context.Context, filters Filter) ([]*Spejder, Metadata
   ` + "`returning`" + `,
   tshirtsize
 from spejder s
-join patruljestatus ps on s.teamId = ps.teamId
 left join spejderstatus ss on s.memberId = ss.id and s.year = ss.year
 WHERE  (LOWER(s.year) = LOWER(?) OR ? = '') AND  (s.teamId = ? OR ? = '')`
 	args := []any{filters.YearSlug, filters.YearSlug, filters.TeamID, filters.TeamID}

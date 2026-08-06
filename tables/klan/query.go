@@ -115,6 +115,10 @@ func (q *querier) GetAll(ctx context.Context, f Filter) ([]Klan, error) {
 	if len(where) == 0 {
 		where = []string{"1 = 1"}
 	}
+	// signupStatus != '' used to ride along in a JOIN on patruljestatus, a table
+	// this entity does not own and read no column from. The predicate is klan's
+	// own, so it belongs in the WHERE clause.
+	where = append(where, "t.signupStatus != ''")
 	query := `SELECT t.teamId, t.name, t.groupName, t.korps, t.signupStatus, t.lok,
 			(SELECT COUNT(*) FROM senior s where t.teamId = s.teamId) memberCount,
 			(SELECT COALESCE(SUM(pmt.amount), 0)
@@ -123,7 +127,6 @@ func (q *querier) GetAll(ctx context.Context, f Filter) ([]Klan, error) {
 				WHERE pmt.status IN ('reserved', 'received')
 				  AND (pmt.orderForeignKey = t.teamId OR o.ownerId = t.teamId)) as paidAmount
 		FROM klan t
-		JOIN patruljestatus ts ON t.teamId = ts.teamId AND t.signupStatus != ''
 		WHERE ` + strings.Join(where, " AND ")
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -162,10 +165,9 @@ func (q *querier) GetByID(ctx context.Context, teamID types.TeamID) (*Klan, erro
 
 	query := `SELECT t.teamId, t.year, t.name, t.groupName, t.korps, t.memberCount, t.signupStatus, t.lok
 		FROM klan t
-		JOIN patruljestatus ts ON t.teamId = ts.teamID
 		WHERE t.teamId = ?`
 	var t Klan
-	err := q.db.QueryRow(query, teamID).Scan(
+	err := q.db.QueryRowContext(ctx, query, teamID).Scan(
 		&t.ID,
 		&t.Year,
 		&t.Name,

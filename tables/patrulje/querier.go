@@ -88,12 +88,14 @@ func (q *querier) GetByID(ctx context.Context, teamID types.TeamID) (*Patrulje, 
 		return nil, tables.ErrRecordNotFound
 	}
 
-	query := `SELECT p.teamId, p.teamNumber, p.name, p.groupName, p.korps, p.liga, p.memberCount
+	// No join on patruljestatus: that table is no longer maintained, and joining
+	// it silently hid every patrulje without a status row.
+	query := `SELECT p.teamId, p.teamNumber, p.name, p.groupName, p.korps, p.liga, p.memberCount,
+			p.contactName, p.contactPhone, p.contactEmail, p.contactRole
 		FROM patrulje p
-		JOIN patruljestatus ps ON p.teamId = ps.teamID
 		WHERE p.teamId = ?`
 	var p Patrulje
-	err := q.db.QueryRow(query, teamID).Scan(
+	err := q.db.QueryRowContext(ctx, query, teamID).Scan(
 		&p.TeamID,
 		&p.TeamNumber,
 		&p.Name,
@@ -101,6 +103,10 @@ func (q *querier) GetByID(ctx context.Context, teamID types.TeamID) (*Patrulje, 
 		&p.Korps,
 		&p.Liga,
 		&p.MemberCount,
+		&p.ContactName,
+		&p.ContactPhone,
+		&p.ContactEmail,
+		&p.ContactRole,
 	)
 	if err != nil {
 		switch {

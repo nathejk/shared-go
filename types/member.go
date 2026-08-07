@@ -11,12 +11,12 @@ package types
 // # Lifecycle
 //
 //	registered ──seat assigned──> seated ──race starts──> racing ──walks it──> finished
-//	                                                        │
-//	                                     calls trailside assistance
-//	                                                        ↓
+//	                                                        ↕
+//	                             calls trailside assistance ↕ carries on themselves
+//	                                                        ↕
 //	                                                     waiting
 //	                                                        │ a car collects them
-//	                                                        ↓
+//	                                                        ↓  ── the point of no return
 //	                                                     transit
 //	                                                        │ handed over at HQ
 //	                                                        ↓
@@ -33,9 +33,23 @@ package types
 // From racing onwards there are two ways out, and they are not
 // interchangeable. A member either walks the route to the end (finished) or
 // leaves it and enters our care (waiting, transit, sheltered) until somebody
-// takes them off our hands (released, reunited). The withdrawal route is
-// one-way: leaving it back onto the route is not a transition we model, so
-// finished means what it says — see CanFinish.
+// takes them off our hands (released, reunited).
+//
+// # Outside help
+//
+// racing and waiting are reversible in both directions. A member who called
+// trailside assistance and then decides they can carry on has their status put
+// back to racing and may still finish: sitting by the trail costs them time, not
+// the route, and plenty of members who stop for a blister, a bad stretch or a
+// cry walk the rest of it themselves.
+//
+// What cannot be uncrossed is outside help. Up to and including waiting the
+// member has covered every metre on their own legs; the moment they get into a
+// car they have not, and no later event puts that back. So transit onwards is
+// one-way, and a member who has ridden in a car can never be finished — however
+// short the lift or however much of the route they had already walked. Because
+// there is no path back from transit, that rule is decidable from the current
+// status alone: see CanFinish.
 //
 // # Terminal states
 //
@@ -78,6 +92,9 @@ const (
 	// trail. This is the only state in which a member counts towards their
 	// team's strength on the route, and the only one from which they can
 	// finish.
+	//
+	// A member who stopped for trailside assistance and then carried on under
+	// their own steam comes back to this state — waiting is not a one-way door.
 	MemberStatusRacing MemberStatus = "racing"
 
 	// MemberStatusFinished means the member walked the route to the end under
@@ -94,15 +111,24 @@ const (
 	// be collected: they (or their team) called trailside assistance and a car
 	// has yet to reach them.
 	//
-	// The team may not continue until the member is collected, so this state
-	// blocks the whole patrol — it is the one worth an alarm on a dashboard
-	// when it lasts too long.
+	// The team may not continue until the member is either collected or back on
+	// their feet, so this state blocks the whole patrol — it is the one worth an
+	// alarm on a dashboard when it lasts too long.
+	//
+	// It is not yet a withdrawal. The member is still self-propelled: they have
+	// accepted no help beyond a phone call, so if they decide to carry on they go
+	// back to racing with their finish intact. Only leaving in the car forfeits
+	// it.
 	MemberStatusWaiting MemberStatus = "waiting"
 
 	// MemberStatusTransit means the member is in one of our cars. The car is
 	// not necessarily driving to HQ: it may be collecting members from other
 	// teams first, so being in transit says who holds the member, not how long
 	// until they arrive.
+	//
+	// Getting in is the point of no return. It is the first outside help the
+	// member has taken, so from here there is no way back onto the route and no
+	// finish to be had — the endings available are reunited and released.
 	MemberStatusTransit MemberStatus = "transit"
 
 	// MemberStatusSheltered means the member has been handed over at HQ and is
@@ -149,13 +175,19 @@ func (s MemberStatus) Valid() bool {
 	return false
 }
 
-// CanFinish reports whether a member in this status may still finish the race.
+// CanFinish reports whether finished may be recorded for a member in this
+// status.
 //
-// Only a member who is still on the route can, which makes this a one-line
-// guard against the mistake the finish line invites: a member who was driven to
-// HQ and handed back to their team when it arrived is standing in the same
-// place as the finishers, and marking them finished would quietly turn a
-// withdrawal into a completed route. They end at reunited.
+// Only from racing, because finishing means having walked the route unaided. A
+// member sitting by the trail in waiting may still finish, but not from there:
+// they have to actually carry on, which puts them back to racing first. A member
+// who took a lift never can, and since there is no path back from transit,
+// refusing every status but racing is enough to enforce that.
+//
+// It is a one-line guard against the mistake the finish line invites: a member
+// who was driven to HQ and handed back to their team when it arrived is standing
+// in the same place as the finishers, and marking them finished would quietly
+// turn a withdrawal into a completed route. They end at reunited.
 func (s MemberStatus) CanFinish() bool {
 	return s == MemberStatusRacing
 }

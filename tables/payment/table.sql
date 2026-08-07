@@ -11,5 +11,6 @@ CREATE TABLE IF NOT EXISTS payment (
     status VARCHAR(99),
     orderForeignKey VARCHAR(99) NOT NULL DEFAULT "",
     orderType VARCHAR(99) NOT NULL DEFAULT "",
+    operations JSON NOT NULL DEFAULT ('[]'),
     PRIMARY KEY (reference)
 );

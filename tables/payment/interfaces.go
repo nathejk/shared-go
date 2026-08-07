@@ -35,6 +35,12 @@ type PaymentRequest struct {
 	// PhoneNumber identifies the payer to a wallet provider, in international
 	// form.
 	PhoneNumber string
+
+	// Lines is the receipt to show the payer, and is guaranteed to sum to
+	// Amount when non-empty — Request drops it otherwise rather than pass a
+	// receipt that does not add up. Empty means "no receipt"; a provider that
+	// cannot render one may ignore it entirely.
+	Lines []Line
 }
 
 // PaymentCreated is the result of authorising a payment. RedirectURL is where

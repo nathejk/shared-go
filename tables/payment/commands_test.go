@@ -1,6 +1,7 @@
 package payment
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -46,7 +47,24 @@ func (f *fakeProvider) CapturePayment(reference string, amount Amount) error {
 
 func newTestCommander(p *fakeProvider) (*commander, *cqrstest.Publisher) {
 	pub := &cqrstest.Publisher{}
-	return &commander{p: pub, pp: p}, pub
+	return &commander{p: pub, r: NewRepository(WithProvider(p)), year: "2026"}, pub
+}
+
+// An unwired provider must report itself rather than panic on a nil interface
+// in the middle of a payment attempt.
+func TestCommandsWithoutAProviderFailLoudly(t *testing.T) {
+	pub := &cqrstest.Publisher{}
+	c := &commander{p: pub, r: NewRepository(), year: "2026"}
+
+	if _, err := c.Request(Charge{Amount: Amount{}, Description: "d", Phone: "40733886", Email: "a@b.dk", ReturnUrl: "u", OrderID: "order-1"}); !errors.Is(err, ErrNoProvider) {
+		t.Errorf("Request err = %v, want ErrNoProvider", err)
+	}
+	if err := c.Capture("ref-1"); !errors.Is(err, ErrNoProvider) {
+		t.Errorf("Capture err = %v, want ErrNoProvider", err)
+	}
+	if len(pub.Messages) != 0 {
+		t.Errorf("nothing should be published, got %v", pub.Subjects())
+	}
 }
 
 func TestRequestAuthorisesAndPublishes(t *testing.T) {
@@ -54,8 +72,14 @@ func TestRequestAuthorisesAndPublishes(t *testing.T) {
 	c, pub := newTestCommander(prov)
 
 	amount := Amount{Currency: types.CurrencyDKK, Value: 45000}
-	url, err := c.Request(amount, "Nathejk tilmelding", types.PhoneNumber("40733886"), types.EmailAddress("a@b.dk"),
-		"https://tilmelding.nathejk.dk/klan/t-1", "order-1", "order")
+	url, err := c.Request(Charge{
+		Amount:      amount,
+		Description: "Nathejk tilmelding",
+		Phone:       types.PhoneNumber("40733886"),
+		Email:       types.EmailAddress("a@b.dk"),
+		ReturnUrl:   "https://tilmelding.nathejk.dk/klan/t-1",
+		OrderID:     "order-1",
+	})
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
@@ -104,7 +128,10 @@ func TestRequestAuthorisesAndPublishes(t *testing.T) {
 	if body.Amount != 45000 || body.Currency != "DKK" {
 		t.Errorf("event amount = %d %s, want 45000 DKK", body.Amount, body.Currency)
 	}
-	if body.OrderForeignKey != "order-1" || body.OrderType != "order" {
+	// The event keeps the projection's polymorphic field names, and the caller
+	// no longer supplies the type: every payment this entity creates is for an
+	// order, so the commander stamps it.
+	if body.OrderForeignKey != "order-1" || body.OrderType != orderTypeOrder {
 		t.Errorf("event should carry the order linkage, got %q/%q", body.OrderForeignKey, body.OrderType)
 	}
 	if body.ReturnUrl != "https://tilmelding.nathejk.dk/klan/t-1" {
@@ -116,8 +143,11 @@ func TestRequestPublishesNothingWhenProviderFails(t *testing.T) {
 	prov := &fakeProvider{createErr: errors.New("mobilepay down")}
 	c, pub := newTestCommander(prov)
 
-	if _, err := c.Request(Amount{Currency: types.CurrencyDKK, Value: 100}, "d",
-		types.PhoneNumber("40733886"), types.EmailAddress("a@b.dk"), "u", "o", "order"); err == nil {
+	if _, err := c.Request(Charge{
+		Amount: Amount{Currency: types.CurrencyDKK, Value: 100}, Description: "d",
+		Phone: "40733886", Email: "a@b.dk", ReturnUrl: "u",
+		OrderID: "o",
+	}); err == nil {
 		t.Fatal("expected the provider error to surface")
 	}
 	// No authorisation exists, so claiming one on the stream would corrupt the
@@ -258,3 +288,229 @@ func TestCaptureStopsAfterFailedCapture(t *testing.T) {
 }
 
 var _ Provider = (*fakeProvider)(nil)
+
+// The receipt reaches both the provider and the event, so the payer sees it in
+// the wallet and it stays on the record afterwards.
+func TestRequestCarriesReceiptLinesToProviderAndEvent(t *testing.T) {
+	prov := &fakeProvider{createResp: PaymentCreated{Reference: "ref-1", RedirectURL: "https://mp/r"}}
+	c, pub := newTestCommander(prov)
+
+	lines := []Line{
+		{Label: "Patrulje-deltagelse", UnitCount: 1, UnitPrice: 25000, Amount: 25000},
+		{Label: "T-shirt (Large)", UnitCount: 1, UnitPrice: 17500, Amount: 17500},
+	}
+	if _, err := c.Request(Charge{
+		Amount: Amount{Currency: types.CurrencyDKK, Value: 42500},
+		Phone:  "40733886", Email: "a@b.dk", OrderID: "order-1",
+		Lines: lines,
+	}); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+
+	if got := prov.created[0].Lines; len(got) != 2 || got[1].Label != "T-shirt (Large)" {
+		t.Errorf("provider should receive the receipt, got %+v", got)
+	}
+
+	var body messages.NathejkPaymentRequested
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.OrderLines) != 2 {
+		t.Fatalf("event should carry the lines, got %+v", body.OrderLines)
+	}
+	want := messages.NathejkPayment_OrderLine{Label: "T-shirt (Large)", UnitCount: 1, UnitPrice: 17500, Amount: 17500}
+	if body.OrderLines[1] != want {
+		t.Errorf("event line = %+v, want %+v", body.OrderLines[1], want)
+	}
+}
+
+// A receipt that does not sum to the charge is dropped, not forwarded and not
+// fatal: the payment is still worth taking, and a provider may reject a receipt
+// that does not add up. This is reachable whenever an order is partly paid,
+// since its lines sum to the total while the charge is the outstanding amount.
+func TestRequestDropsReceiptThatDoesNotSumToTheCharge(t *testing.T) {
+	prov := &fakeProvider{createResp: PaymentCreated{Reference: "ref-1", RedirectURL: "https://mp/r"}}
+	c, pub := newTestCommander(prov)
+
+	if _, err := c.Request(Charge{
+		// Charging 25000 but describing 42500 worth of goods.
+		Amount: Amount{Currency: types.CurrencyDKK, Value: 25000},
+		Phone:  "40733886", Email: "a@b.dk", OrderID: "order-1",
+		Lines: []Line{
+			{Label: "Patrulje-deltagelse", UnitCount: 1, UnitPrice: 25000, Amount: 25000},
+			{Label: "T-shirt (Large)", UnitCount: 1, UnitPrice: 17500, Amount: 17500},
+		},
+	}); err != nil {
+		t.Fatalf("Request should still succeed, got %v", err)
+	}
+
+	if got := prov.created[0].Lines; got != nil {
+		t.Errorf("no receipt should reach the provider, got %+v", got)
+	}
+	if prov.created[0].Amount.Value != 25000 {
+		t.Errorf("the charged amount must be untouched, got %d", prov.created[0].Amount.Value)
+	}
+	var body messages.NathejkPaymentRequested
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.OrderLines) != 0 {
+		t.Errorf("event should carry no lines, got %+v", body.OrderLines)
+	}
+}
+
+func TestChargeLinesReconcile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ch   Charge
+		want bool
+	}{
+		{"no lines is fine", Charge{Amount: Amount{Value: 100}}, true},
+		{"exact", Charge{Amount: Amount{Value: 100}, Lines: []Line{{Amount: 60}, {Amount: 40}}}, true},
+		{"under", Charge{Amount: Amount{Value: 100}, Lines: []Line{{Amount: 60}}}, false},
+		{"over", Charge{Amount: Amount{Value: 100}, Lines: []Line{{Amount: 60}, {Amount: 60}}}, false},
+	} {
+		if got := tc.ch.linesReconcile(); got != tc.want {
+			t.Errorf("%s: linesReconcile() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// fakeQuerier answers the reference-uniqueness lookup. taken lists references it
+// should report as already in use; anything else is free.
+type fakeQuerier struct {
+	taken   map[string]bool
+	err     error
+	lookups []string
+}
+
+func (f *fakeQuerier) GetByReference(_ context.Context, ref string) (*Payment, error) {
+	f.lookups = append(f.lookups, ref)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.taken[ref] {
+		return &Payment{Reference: ref}, nil
+	}
+	return nil, ErrRecordNotFound
+}
+func (f *fakeQuerier) GetAll(context.Context, Filter) ([]Payment, error) { return nil, nil }
+func (f *fakeQuerier) AmountPaid(context.Context, Filter) (int, error)   { return 0, nil }
+
+var _ Queries = (*fakeQuerier)(nil)
+
+// The reference is customer-visible, so it is short and readable rather than a
+// UUID — but it still has to be the identity the provider and the event agree on.
+func TestRequestIssuesAReadableReference(t *testing.T) {
+	prov := &fakeProvider{}
+	// Echo back whatever reference it is handed, as MobilePay does.
+	prov.createResp = PaymentCreated{RedirectURL: "https://mp/r"}
+	c, pub := newTestCommander(prov)
+	c.q = &fakeQuerier{}
+
+	if _, err := c.Request(Charge{Amount: Amount{Currency: types.CurrencyDKK, Value: 100}, OrderID: "order-1"}); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+
+	ref := prov.created[0].Reference
+	if len(ref) != referenceLength {
+		t.Errorf("reference %q is not the expected length", ref)
+	}
+	if strings.ContainsAny(ref, "-_") {
+		t.Errorf("reference %q should be a bare id with no separators", ref)
+	}
+	// The uniqueness check must have looked up the reference actually used.
+	if got := c.q.(*fakeQuerier).lookups; len(got) != 1 || got[0] != ref {
+		t.Errorf("lookups = %v, want exactly [%s]", got, ref)
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want 1 event, got %d", len(pub.Messages))
+	}
+}
+
+// A duplicate would be overwritten silently by the projector's upsert, so a
+// reference already in use must be discarded and another minted.
+//
+// A real collision cannot be provoked — that is the point of 40 bits — so the
+// lookup reports the first attempt as taken instead, which drives the same path.
+func TestRequestRetriesWhenTheReferenceIsTaken(t *testing.T) {
+	prov := &fakeProvider{createResp: PaymentCreated{RedirectURL: "https://mp/r"}}
+	c, _ := newTestCommander(prov)
+	fq := &firstTakenQuerier{}
+	c.q = fq
+
+	if _, err := c.Request(Charge{Amount: Amount{Value: 100}}); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+
+	if len(fq.lookups) != 2 {
+		t.Fatalf("want 2 lookups (one rejected, one accepted), got %v", fq.lookups)
+	}
+	used := prov.created[0].Reference
+	if used == fq.lookups[0] {
+		t.Errorf("used the reference reported as taken: %q", used)
+	}
+	if used != fq.lookups[1] {
+		t.Errorf("used %q but verified %q", used, fq.lookups[1])
+	}
+	// The second draw must be a different reference, not a retry of the same one.
+	if fq.lookups[0] == fq.lookups[1] {
+		t.Errorf("both attempts drew %q; the generator is not being re-run", fq.lookups[0])
+	}
+}
+
+// firstTakenQuerier reports the first reference it is asked about as in use and
+// every later one as free.
+type firstTakenQuerier struct {
+	fakeQuerier
+	asked int
+}
+
+func (q *firstTakenQuerier) GetByReference(_ context.Context, ref string) (*Payment, error) {
+	q.lookups = append(q.lookups, ref)
+	q.asked++
+	if q.asked == 1 {
+		return &Payment{Reference: ref}, nil
+	}
+	return nil, ErrRecordNotFound
+}
+
+// Every attempt colliding must fail the payment rather than proceed with a
+// reference known to be in use.
+func TestRequestFailsWhenEveryReferenceIsTaken(t *testing.T) {
+	prov := &fakeProvider{createResp: PaymentCreated{RedirectURL: "https://mp/r"}}
+	c, pub := newTestCommander(prov)
+	c.q = &alwaysTakenQuerier{}
+
+	if _, err := c.Request(Charge{Amount: Amount{Value: 100}}); err == nil {
+		t.Fatal("expected Request to fail rather than reuse a reference")
+	}
+	if len(prov.created) != 0 {
+		t.Errorf("no payment should be created, got %+v", prov.created)
+	}
+	if len(pub.Messages) != 0 {
+		t.Errorf("nothing should be published, got %v", pub.Subjects())
+	}
+}
+
+type alwaysTakenQuerier struct{ fakeQuerier }
+
+func (a *alwaysTakenQuerier) GetByReference(_ context.Context, ref string) (*Payment, error) {
+	a.lookups = append(a.lookups, ref)
+	return &Payment{Reference: ref}, nil
+}
+
+// A failing lookup must not block a payment: the reference is almost certainly
+// free, and refusing money because a read failed is the worse outcome.
+func TestRequestProceedsWhenTheUniquenessCheckErrors(t *testing.T) {
+	prov := &fakeProvider{createResp: PaymentCreated{RedirectURL: "https://mp/r"}}
+	c, _ := newTestCommander(prov)
+	c.q = &fakeQuerier{err: errors.New("database down")}
+
+	if _, err := c.Request(Charge{Amount: Amount{Value: 100}}); err != nil {
+		t.Fatalf("Request should proceed, got %v", err)
+	}
+	if len(prov.created) != 1 {
+		t.Errorf("the payment should still have been created")
+	}
+}

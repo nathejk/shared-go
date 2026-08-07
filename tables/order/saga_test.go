@@ -47,7 +47,9 @@ func (*sagaFakeQueries) PaidQuantityBySKU(context.Context, types.YearSlug, types
 
 type sagaFakePayments struct{ pmt *payment.Payment }
 
-func (f sagaFakePayments) GetByReference(string) (*payment.Payment, error) { return f.pmt, nil }
+func (f sagaFakePayments) GetByReference(context.Context, string) (*payment.Payment, error) {
+	return f.pmt, nil
+}
 
 // receivedMsg builds a payment.received message the way production does, so
 // HandleMessage decodes the same body it would off the wire.

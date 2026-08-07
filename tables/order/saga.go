@@ -15,12 +15,14 @@ import (
 )
 
 // PaymentReader is the small slice of the payment read API that the order
-// saga consumes. Declared as an interface so this package doesn't take a
-// hard dependency on the payment package's concrete value type — the
-// existing *payment.Query already satisfies it.
+// saga consumes. Declared as an interface so this package takes no dependency
+// on the payment entity's concrete read side — payment.Queries satisfies it,
+// which the assertion below pins so the two cannot drift apart again.
 type PaymentReader interface {
-	GetByReference(reference string) (*payment.Payment, error)
+	GetByReference(ctx context.Context, reference string) (*payment.Payment, error)
 }
+
+var _ PaymentReader = payment.Queries(nil)
 
 // DefaultSagaSettle is the total budget the saga spends waiting for the
 // (eventually consistent) payment projection to reflect a just-received
@@ -164,7 +166,8 @@ func (s *saga) HandleMessage(msg cqrs.Message) error {
 // case — unknown/legacy reference, already-paid, cancelled, free, or a
 // successful transition — returns false.
 func (s *saga) attemptTransition(reference string) (retry bool, err error) {
-	pmt, err := s.payments.GetByReference(reference)
+	ctx := context.Background()
+	pmt, err := s.payments.GetByReference(ctx, reference)
 	if err != nil {
 		// Reference not found / not interesting; nothing to do.
 		return false, nil
@@ -176,7 +179,7 @@ func (s *saga) attemptTransition(reference string) (retry bool, err error) {
 	// Legacy payments use the team/user ID as OrderForeignKey rather
 	// than an order ID. GetByID will return ErrRecordNotFound for those —
 	// silently skip; the saga is a no-op for the legacy flow by design.
-	o, err := s.q.GetByID(context.Background(), pmt.OrderForeignKey)
+	o, err := s.q.GetByID(ctx, pmt.OrderForeignKey)
 	if err != nil {
 		if errors.Is(err, tables.ErrRecordNotFound) {
 			return false, nil

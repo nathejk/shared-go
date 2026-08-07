@@ -118,7 +118,8 @@ satisfies it. Existing ports:
 - `payment.Provider` — a payment service provider in Nathejk's own vocabulary,
   adapted from e.g. MobilePay in the consuming service and injected with
   `payment.WithProvider`
-- `order.PaymentReader` — the slice of the payment read API the order saga needs
+- `order.PaymentReader` — the slice of the payment read API the order saga
+  needs; `payment.Queries` satisfies it, pinned by an assertion in `order`
 
 `klan`, `payment` and `signup` take their optional collaborators as variadic
 option functions (`WithProductQueries`, `WithProvider`, `WithTeamMaxMemberCount`,

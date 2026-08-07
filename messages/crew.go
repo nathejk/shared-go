@@ -33,7 +33,9 @@ type NathejkCrewMemberSectionAssigned struct {
 type NathejkSectionAdded struct {
 	Slug              types.Slug `json:"slug"`
 	ParentSectionSlug types.Slug `json:"sectionSlug,omitempty"`
-	Label             string     `json:"label"`
+	Label             string     `json:"label,omitempty"`
+	Type              types.Slug `json:"type,omitempty"`
+	SelfAssignable    *bool      `json:"selfAssignable,omitempty"`
 }
 
 type NathejkSectionSorted struct {

@@ -38,6 +38,9 @@ func (*sagaFakeQueries) FindOpenOrder(context.Context, types.YearSlug, types.Tea
 func (*sagaFakeQueries) ListByOwner(context.Context, types.YearSlug, types.TeamType, string) ([]Order, error) {
 	return nil, nil
 }
+func (*sagaFakeQueries) ListByYear(context.Context, types.YearSlug) ([]Order, error) {
+	return nil, nil
+}
 func (*sagaFakeQueries) ReservedQuantity(context.Context, types.YearSlug, string) (int, error) {
 	return 0, nil
 }

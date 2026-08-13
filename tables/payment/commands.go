@@ -33,15 +33,19 @@ type Line struct {
 	Amount    int
 }
 
-// orderTypeOrder is the OrderType stamped on every payment this entity creates.
+// OrderTypeOrder is the OrderType stamped on every payment this entity creates,
+// and the marker that a payment's OrderForeignKey is an order id.
 //
 // The field is not redundant on the projection, only on the way in. Historically
 // a payment pointed straight at a team and OrderType said which kind
-// ("patrulje", "klan", "g\u00f8gler"); 769 of the 1189 rows still look like that, and
+// ("patrulje", "klan", "gøgler"); 769 of the 1189 rows still look like that, and
 // mobilepayCallbackHandler branches on it to recover the payer's identity. Since
 // the order entity landed, every new payment is for an order — so the value is a
 // constant here and Charge does not ask a caller to repeat it.
-const orderTypeOrder = "order"
+//
+// Exported because the order saga needs it to tell a legacy payment (no order to
+// settle, ever) from an order it has not seen projected yet (worth retrying).
+const OrderTypeOrder = "order"
 
 // Charge is a request to take money.
 //
@@ -158,7 +162,7 @@ func (c *commander) Request(ch Charge) (string, error) {
 		Method:          "mobilepay",
 		OrderLines:      messageLines(lines),
 		OrderForeignKey: ch.OrderID,
-		OrderType:       orderTypeOrder,
+		OrderType:       OrderTypeOrder,
 	}
 	msg := c.p.MessageFunc()(c.subject(resp.Reference, "requested"))
 	msg.SetBody(body)

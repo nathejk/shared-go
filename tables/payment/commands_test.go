@@ -131,7 +131,7 @@ func TestRequestAuthorisesAndPublishes(t *testing.T) {
 	// The event keeps the projection's polymorphic field names, and the caller
 	// no longer supplies the type: every payment this entity creates is for an
 	// order, so the commander stamps it.
-	if body.OrderForeignKey != "order-1" || body.OrderType != orderTypeOrder {
+	if body.OrderForeignKey != "order-1" || body.OrderType != OrderTypeOrder {
 		t.Errorf("event should carry the order linkage, got %q/%q", body.OrderForeignKey, body.OrderType)
 	}
 	if body.ReturnUrl != "https://tilmelding.nathejk.dk/klan/t-1" {

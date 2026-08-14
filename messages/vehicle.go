@@ -69,6 +69,14 @@ type NathejkVehicleUpdated struct {
 	Description     *string       `json:"description,omitempty"`
 }
 
+// NathejkVehicleSectionAssigned places a vehicle under a section — the crew
+// group responsible for it — mirroring how NathejkCrewMemberSectionAssigned
+// places a person. Re-emitted on each reassignment; the latest section wins.
+type NathejkVehicleSectionAssigned struct {
+	VehicleID   types.VehicleID `json:"vehicleId"`
+	SectionSlug types.Slug      `json:"sectionSlug"`
+}
+
 // NathejkVehicleDriverAssigned puts a specific person behind the wheel of a
 // vehicle for a run.
 //

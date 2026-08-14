@@ -51,6 +51,14 @@ type LegacyID ID
 type SosID ID
 type LokID ID
 
+// VehicleID identifies a vehicle enrolled for the season — one of the cars that
+// collects members off the route (see the NathejkVehicle* messages).
+type VehicleID ID
+
+func (ID VehicleID) New() VehicleID {
+	return VehicleID("vehicle-" + uuid.New().String())
+}
+
 func (ID LegacyID) Checksum() string {
 	// PHP: return substr(md5($this->id . '**@'), -5);
 	md5sum := md5.Sum([]byte(string(ID) + "**@"))

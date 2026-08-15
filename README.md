@@ -82,6 +82,7 @@ a saga.
 | `senior` | `New(w, r)` | filter |
 | `signup` | `New(p, w, r, services ...service)` | commands, repository |
 | `spejder` | `New(w, r)` | filter |
+| `vehicle` | `New(p, w, r)` | commands, filter |
 
 The root `tables` package holds only what the entities share:
 

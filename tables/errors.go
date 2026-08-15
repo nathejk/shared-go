@@ -6,7 +6,7 @@
 // and, where relevant, a command side and a saga:
 //
 //	crewmember  klan     order    patrulje  payment
-//	product     section  senior   signup    spejder
+//	product     section  senior   signup    spejder   vehicle
 //
 // They are shared verbatim between the Nathejk services, so they must not
 // depend on anything outside this module: what an entity needs from the

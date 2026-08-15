@@ -44,6 +44,16 @@ type Filter struct {
 	// YearSlug matches the season the vehicle was registered for.
 	YearSlug types.YearSlug
 
+	// SectionSlug matches vehicles belonging to that crew group. Pass an empty
+	// slug to not filter; asking for the unassigned ones is Unassigned, since a
+	// zero value cannot mean both "any" and "none".
+	SectionSlug types.Slug
+
+	// Unassigned restricts the result to vehicles that belong to no section,
+	// which is how a coordinator finds the cars nobody has taken charge of. It
+	// overrides SectionSlug.
+	Unassigned bool
+
 	// DriverUserIDs matches vehicles whose current driver is any of these
 	// people — the cars a group can be reached through, e.g. everyone in a
 	// section, or the drivers currently out on pickups.

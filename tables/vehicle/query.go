@@ -67,6 +67,12 @@ func (q *querier) GetAll(ctx context.Context, f Filter) ([]Vehicle, error) {
 	if f.YearSlug != "" {
 		where["year"] = string(f.YearSlug)
 	}
+	if f.SectionSlug != "" {
+		where["sectionSlug"] = string(f.SectionSlug)
+	}
+	if f.Unassigned {
+		where["sectionSlug"] = ""
+	}
 	if len(f.DriverUserIDs) > 0 {
 		ids := make([]string, 0, len(f.DriverUserIDs))
 		for _, id := range f.DriverUserIDs {

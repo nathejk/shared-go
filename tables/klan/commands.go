@@ -38,6 +38,26 @@ type commander struct {
 	r repository
 }
 
+// seasonOf returns the season the team belongs to, for the subjects its events
+// are published on.
+//
+// Read off the team's own row, which inherited it from the signup that created
+// the team (klan's projector takes it from the signedup subject), so a member
+// event always lands in the season its team signed up for rather than one the
+// process was configured with. These subjects previously carried a literal
+// "2026".
+//
+// A team that is not projected yet has no season to name, and publishing a
+// subject with an empty year slot is worse than failing — that is how the
+// phonenumber.verified events ended up unroutable.
+func (c *commander) seasonOf(ctx context.Context, teamID types.TeamID) (types.YearSlug, error) {
+	klan, err := c.q.GetByID(ctx, teamID)
+	if err != nil {
+		return "", fmt.Errorf("klan %s: cannot determine season: %w", teamID, err)
+	}
+	return klan.Year, nil
+}
+
 // RequestMemberCount attempts to reserve seats for the given team.
 // It returns the number of seats successfully reserved. If capacity has been
 // reached the request is placed on a waiting list and the return value is 0.
@@ -180,10 +200,14 @@ func (c *commander) Delete(ctx context.Context, teamID types.TeamID) error {
 
 // AddMember — see Commands.AddMember.
 func (c *commander) AddMember(ctx context.Context, teamID types.TeamID, m Senior) (types.MemberID, error) {
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return "", err
+	}
 	if m.MemberID == "" {
 		m.MemberID = types.MemberID(uuid.New().String())
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.senior.%s.updated", "2026", m.MemberID)))
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.senior.%s.updated", year, m.MemberID)))
 	// Include teamId so the senior projector's two-phase decode does an
 	// INSERT IGNORE for the brand-new member (see senior/consumer.go). This
 	// is the create path.
@@ -205,7 +229,11 @@ func (c *commander) UpdateMember(ctx context.Context, teamID types.TeamID, m Sen
 	if m.MemberID == "" {
 		return fmt.Errorf("UpdateMember: empty memberId")
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.senior.%s.updated", "2026", m.MemberID)))
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.senior.%s.updated", year, m.MemberID)))
 	// No teamId in the body: the projector skips its INSERT IGNORE branch and
 	// performs a pure UPDATE, so a stale/unknown memberId is a no-op rather
 	// than resurrecting a member. Update never creates an identity.
@@ -219,7 +247,11 @@ func (c *commander) DeleteMember(ctx context.Context, teamID types.TeamID, membe
 	if memberID == "" {
 		return fmt.Errorf("DeleteMember: empty memberId")
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.senior.%s.deleted", "2026", memberID)))
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.senior.%s.deleted", year, memberID)))
 	msg.SetBody(&messages.NathejkMemberDeleted{
 		MemberID: memberID,
 		TeamID:   teamID,
@@ -274,7 +306,15 @@ type Senior struct {
 // commands, so a routine team save can never create or delete a senior
 // identity (and the old memberCount placeholder rows are gone).
 func (c *commander) UpdateTeam(ctx context.Context, teamID types.TeamID, team Team) error {
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.klan.%s.updated", "2026", teamID)))
+	// Loaded up front rather than after publishing: the team's row carries the
+	// season every subject below needs, so without it there is nothing correct
+	// to publish. It also means klan is non-nil from here on.
+	klan, err := c.q.GetByID(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("klan %s: cannot determine season: %w", teamID, err)
+	}
+
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.klan.%s.updated", klan.Year, teamID)))
 	msg.SetBody(&messages.NathejkKlanUpdated{
 		TeamID:    teamID,
 		Name:      team.Name,
@@ -285,24 +325,23 @@ func (c *commander) UpdateTeam(ctx context.Context, teamID types.TeamID, team Te
 		return err
 	}
 
-	klan, _ := c.q.GetByID(ctx, teamID)
-	if klan != nil && klan.Status == types.SignupStatusOnHold {
+	if klan.Status == types.SignupStatusOnHold {
 		// The team is on waiting list, do not transition status.
 		return nil
 	}
 
-	seniorCount, _ := c.q.RequestedSeniorCount(ctx, "2026")
+	seniorCount, _ := c.q.RequestedSeniorCount(ctx, klan.Year)
 	if seniorCount > 115 {
-		statusMsg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.klan.%s.status.changed", "2026", teamID)))
+		statusMsg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.klan.%s.status.changed", klan.Year, teamID)))
 		statusMsg.SetBody(&messages.NathejkKlanStatusChanged{TeamID: teamID, Status: types.SignupStatusOnHold})
-		if klan != nil && (klan.Status != types.SignupStatusPay) && (klan.Status != types.SignupStatusPaid) {
+		if (klan.Status != types.SignupStatusPay) && (klan.Status != types.SignupStatusPaid) {
 			if err := c.p.Publish(statusMsg); err != nil {
 				return err
 			}
 		}
 	}
-	if klan != nil && klan.Status == "" {
-		statusMsg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.klan.%s.status.changed", "2026", teamID)))
+	if klan.Status == "" {
+		statusMsg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.klan.%s.status.changed", klan.Year, teamID)))
 		statusMsg.SetBody(&messages.NathejkKlanStatusChanged{TeamID: teamID, Status: types.SignupStatusPay})
 		if err := c.p.Publish(statusMsg); err != nil {
 			return err

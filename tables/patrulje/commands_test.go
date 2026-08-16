@@ -6,11 +6,36 @@ import (
 
 	"github.com/jrgensen/cqrs"
 	"github.com/jrgensen/cqrs/cqrstest"
+	"github.com/nathejk/shared-go/tables"
+	"github.com/nathejk/shared-go/types"
 )
+
+// fakeQueries answers with one patrulje, so the commands can be driven without
+// a database. Its Year is what every published subject must carry — the season
+// the team signed up for.
+type fakeQueries struct {
+	patrulje *Patrulje
+	last     *Patrulje
+}
+
+func (f fakeQueries) GetByID(context.Context, types.TeamID) (*Patrulje, error) {
+	if f.patrulje == nil {
+		return nil, tables.ErrRecordNotFound
+	}
+	return f.patrulje, nil
+}
+
+func (f fakeQueries) GetLastWithNumber(context.Context) (*Patrulje, error) {
+	if f.last == nil {
+		return nil, tables.ErrRecordNotFound
+	}
+	return f.last, nil
+}
 
 func newTestCommander() (*commander, *cqrstest.Publisher) {
 	pub := &cqrstest.Publisher{}
-	return &commander{p: pub}, pub
+	q := fakeQueries{patrulje: &Patrulje{TeamID: "team-1", Year: "2026"}}
+	return &commander{p: pub, q: q}, pub
 }
 
 // drain returns everything published since the last call, and clears the spy.
@@ -107,5 +132,41 @@ func TestUpdateEmitsTeamEventOnly(t *testing.T) {
 	}
 	if !msgs[0].Subject().Match("nathejk.*.patrulje.*.updated") {
 		t.Errorf("unexpected subject %q", msgs[0].Subject().Subject())
+	}
+}
+
+// The season comes off the team's row, which inherited it from the signup — via
+// the signedup subject, not the projector's wall clock. These subjects used to
+// carry a literal "2026".
+func TestSubjectsUseTheTeamsSeason(t *testing.T) {
+	pub := &cqrstest.Publisher{}
+	q := fakeQueries{patrulje: &Patrulje{TeamID: "team-1", Year: "2027"}}
+	c := &commander{p: pub, q: q}
+
+	if _, err := c.AddMember(context.Background(), "team-1", Spejder{Name: "Bo"}); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	if err := c.AssignNumber(context.Background(), "team-1"); err != nil {
+		t.Fatalf("AssignNumber: %v", err)
+	}
+	for _, subj := range pub.Subjects() {
+		if !cqrs.SubjectFromStr(subj).Match("NATHEJK.2027.*.*.*") {
+			t.Errorf("subject %q should carry the team's season", subj)
+		}
+	}
+}
+
+func TestCommandsFailWhenTeamIsUnknown(t *testing.T) {
+	pub := &cqrstest.Publisher{}
+	c := &commander{p: pub, q: fakeQueries{patrulje: nil}}
+
+	if _, err := c.AddMember(context.Background(), "team-1", Spejder{Name: "Bo"}); err == nil {
+		t.Error("AddMember should fail when the team is unknown")
+	}
+	if err := c.AssignNumber(context.Background(), "team-1"); err == nil {
+		t.Error("AssignNumber should fail when the team is unknown")
+	}
+	if len(pub.Messages) != 0 {
+		t.Errorf("nothing should be published, got %v", pub.Subjects())
 	}
 }

@@ -69,9 +69,38 @@ type Spejder struct {
 	TShirtSize   string             `json:"tshirtSize"`
 }
 
+// queries is the slice of the read side the commander needs: the team's season,
+// and the highest team number in use. Declared as an interface rather than
+// taking *querier so the commands can be driven without a database.
+type queries interface {
+	GetByID(context.Context, types.TeamID) (*Patrulje, error)
+	GetLastWithNumber(context.Context) (*Patrulje, error)
+}
+
+var _ queries = (*querier)(nil)
+
 type commander struct {
 	p cqrs.Publisher
-	q *querier
+	q queries
+}
+
+// seasonOf returns the season the team belongs to, for the subjects its events
+// are published on.
+//
+// Read off the team's own row, which inherited it from the signup that created
+// the team, so a member event always lands in the season its team signed up for
+// rather than one the process was configured with or the calendar happened to
+// say. These subjects previously carried a literal "2026".
+//
+// A team that is not projected yet has no season to name, and publishing a
+// subject with an empty year slot is worse than failing — that is how the
+// phonenumber.verified events ended up unroutable.
+func (c *commander) seasonOf(ctx context.Context, teamID types.TeamID) (string, error) {
+	team, err := c.q.GetByID(ctx, teamID)
+	if err != nil {
+		return "", fmt.Errorf("patrulje %s: cannot determine season: %w", teamID, err)
+	}
+	return team.Year, nil
 }
 
 // Update publishes a NathejkTeamUpdated for the team / contact slice. Members
@@ -79,7 +108,11 @@ type commander struct {
 // AddMember / UpdateMember / DeleteMember commands, so a routine team save can
 // never create or delete a member identity.
 func (c *commander) Update(ctx context.Context, teamID types.TeamID, team Team, contact Contact) error {
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.patrulje.%s.updated", "2026", teamID)))
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.patrulje.%s.updated", year, teamID)))
 	msg.SetBody(&messages.NathejkTeamUpdated{
 		TeamID:            teamID,
 		Type:              types.TeamTypePatrulje,
@@ -99,10 +132,14 @@ func (c *commander) Update(ctx context.Context, teamID types.TeamID, team Team, 
 
 // AddMember — see Commands.AddMember.
 func (c *commander) AddMember(ctx context.Context, teamID types.TeamID, m Spejder) (types.MemberID, error) {
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return "", err
+	}
 	if m.MemberID == "" {
 		m.MemberID = types.MemberID(uuid.New().String())
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.spejder.%s.updated", "2026", m.MemberID)))
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.spejder.%s.updated", year, m.MemberID)))
 	// Include teamId so the projector's two-phase decode does an INSERT IGNORE
 	// for the brand-new member (see spejder/consumer.go). This is the create
 	// path.
@@ -124,7 +161,11 @@ func (c *commander) UpdateMember(ctx context.Context, teamID types.TeamID, m Spe
 	if m.MemberID == "" {
 		return fmt.Errorf("UpdateMember: empty memberId")
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.spejder.%s.updated", "2026", m.MemberID)))
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.spejder.%s.updated", year, m.MemberID)))
 	// No teamId in the body: the projector skips its INSERT IGNORE branch and
 	// performs a pure UPDATE, so a stale/unknown memberId is a no-op rather
 	// than resurrecting a member. Update never creates an identity.
@@ -138,7 +179,11 @@ func (c *commander) DeleteMember(ctx context.Context, teamID types.TeamID, membe
 	if memberID == "" {
 		return fmt.Errorf("DeleteMember: empty memberId")
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.spejder.%s.deleted", "2026", memberID)))
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return err
+	}
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.spejder.%s.deleted", year, memberID)))
 	msg.SetBody(&messages.NathejkMemberDeleted{
 		MemberID: memberID,
 		TeamID:   teamID,
@@ -166,6 +211,10 @@ func newScoutUpdated(m Spejder) messages.NathejkScoutUpdated {
 // NathejkPatrolNumberAssigned event for `teamID` set to that-number+1
 // (starting at 1 if none have been assigned yet).
 func (c *commander) AssignNumber(ctx context.Context, teamID types.TeamID) error {
+	year, err := c.seasonOf(ctx, teamID)
+	if err != nil {
+		return err
+	}
 	last, err := c.q.GetLastWithNumber(ctx)
 	nr := 1
 	if err == nil && last != nil && last.TeamNumber != "" {
@@ -177,7 +226,7 @@ func (c *commander) AssignNumber(ctx context.Context, teamID types.TeamID) error
 	} else if err != nil && !errors.Is(err, tables.ErrRecordNotFound) {
 		return err
 	}
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK.%s.patrulje.%s.numberassigned", "2026", teamID)))
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK.%s.patrulje.%s.numberassigned", year, teamID)))
 	msg.SetBody(&messages.NathejkPatrolNumberAssigned{
 		TeamID:     teamID,
 		TeamNumber: fmt.Sprintf("%d", nr),

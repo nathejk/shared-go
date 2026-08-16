@@ -119,7 +119,7 @@ func (c *commander) VerifyEmail(ctx context.Context, teamID types.TeamID, secret
 		return tables.ErrVerificationFailed
 	}
 
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.%s.%s.emailaddress.verified", signup.TeamType, types.TeamTypeKlan, teamID)))
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.%s.%s.emailaddress.verified", signup.Year, signup.TeamType, teamID)))
 	msg.SetBody(&messages.NathejkSignupEmailVerified{
 		TeamID: teamID,
 		Email:  signup.EmailPending,
@@ -140,7 +140,7 @@ func (c *commander) VerifyPhone(ctx context.Context, teamID types.TeamID, pincod
 		return tables.ErrVerificationFailed
 	}
 
-	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.%s.%s.phonenumber.verified", signup.TeamType, types.TeamTypeKlan, teamID)))
+	msg := c.p.MessageFunc()(cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.%s.%s.phonenumber.verified", signup.Year, signup.TeamType, teamID)))
 	msg.SetBody(&messages.NathejkSignupPhoneVerified{
 		TeamID:  teamID,
 		Phone:   signup.PhonePending,

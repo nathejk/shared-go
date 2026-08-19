@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/jrgensen/cqrs"
 	"github.com/nathejk/shared-go/tables"
@@ -47,7 +48,46 @@ type Queries interface {
 	//
 	// Cancelled and open orders are deliberately excluded; the contract is
 	// "paid".
+	//
+	// Counts units per SKU regardless of size. Use PaidQuantityByVariant when
+	// the size matters — which it does for anything that has to be shipped.
 	PaidQuantityBySKU(ctx context.Context, year types.YearSlug, ownerType types.TeamType, ownerID string) (map[string]int, error)
+
+	// PaidQuantityByVariant is PaidQuantityBySKU keyed by (SKU, size) instead of
+	// by SKU alone, so a paid t-shirt is counted as the size it was actually
+	// bought in.
+	//
+	// This is what lets a post-payment size change stay free and still be
+	// visible: knowing only that one adult t-shirt is paid for, the offset
+	// cancels the new size against the old one and the order ends up saying
+	// nothing about what to ship. Knowing it was an xxl, the offset can reclaim
+	// that xxl and charge nothing for the 3xl replacing it.
+	//
+	// Sizes are normalised (trimmed, lowercased); lines with no size attribute
+	// count under the "" size.
+	PaidQuantityByVariant(ctx context.Context, year types.YearSlug, ownerType types.TeamType, ownerID string) (map[VariantKey]int, error)
+
+	// ShippableByVariant returns the net quantity per (SKU, size) the owner is to
+	// receive: what fulfillment packs.
+	//
+	// This is the read that makes the order authoritative for size (see the
+	// package doc). Net, and across every non-cancelled order — both properties
+	// are load-bearing:
+	//
+	//   - Net, because a size change is recorded as a pair of lines (-1 of the
+	//     size handed back, +1 of the size now wanted). Summing only positives
+	//     here would pack both shirts.
+	//   - Open orders included, because a free size change lives on an open order
+	//     with nothing due. Counting paid orders only would pack the old size.
+	//
+	// A consequence worth knowing: a shirt that is genuinely unpaid — an
+	// (N+1)-th one sitting on an open order awaiting payment — is included too.
+	// The question this answers is "which shirts does this owner's order say they
+	// get", not "which shirts have been paid for"; cross-reference DueAmount if
+	// the difference matters to the caller.
+	//
+	// Variants that net to zero are omitted rather than returned as 0.
+	ShippableByVariant(ctx context.Context, year types.YearSlug, ownerType types.TeamType, ownerID string) (map[VariantKey]int, error)
 }
 
 type querier struct {
@@ -250,10 +290,20 @@ func scanLinesByOrder(rows *sql.Rows, caller string) (map[string][]Line, error) 
 	return byOrder, nil
 }
 
+// ReservedQuantity — see Queries.ReservedQuantity.
+//
+// Positive quantities only. Derived credit lines carry a negative quantity to
+// reclaim a paid unit of another size (see ApplyPaidOffset), and letting those
+// net against the total would hand out stock that nothing has released: the
+// reclaimed unit is a specific size returning to a per-SKU counter that cannot
+// express sizes. Since a credit is always paired with a charge for the same SKU,
+// positive-only and net accounting agree on the SKU total anyway — they differ
+// only in the window where a credit exists without its pair, which is a state
+// this package never produces.
 func (q *querier) ReservedQuantity(ctx context.Context, year types.YearSlug, productSKU string) (int, error) {
 	var qty sql.NullInt64
 	err := q.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(l.quantity), 0)
+		`SELECT COALESCE(SUM(CASE WHEN l.quantity > 0 THEN l.quantity ELSE 0 END), 0)
 			FROM order_line l
 			JOIN orders o ON o.orderId = l.orderId
 			WHERE o.year = ? AND l.productSku = ? AND o.status <> 'cancelled'`,
@@ -262,6 +312,79 @@ func (q *querier) ReservedQuantity(ctx context.Context, year types.YearSlug, pro
 		return 0, err
 	}
 	return int(qty.Int64), nil
+}
+
+// PaidQuantityByVariant — see Queries.PaidQuantityByVariant.
+//
+// Aggregated in Go rather than with JSON_EXTRACT and a GROUP BY: attributes is a
+// text column, not a native json one, and may hold NULL or ” as well as JSON,
+// so the extraction has to tolerate all three. Doing it in Go also means the
+// size is read by exactly the same code that reads it everywhere else — lineSize
+// — rather than by a second, SQL-shaped definition free to drift from it.
+func (q *querier) PaidQuantityByVariant(ctx context.Context, year types.YearSlug, ownerType types.TeamType, ownerID string) (map[VariantKey]int, error) {
+	return q.quantityByVariant(ctx, year, ownerType, ownerID, "o.status = 'paid'", false)
+}
+
+// ShippableByVariant — see Queries.ShippableByVariant.
+func (q *querier) ShippableByVariant(ctx context.Context, year types.YearSlug, ownerType types.TeamType, ownerID string) (map[VariantKey]int, error) {
+	return q.quantityByVariant(ctx, year, ownerType, ownerID, "o.status <> 'cancelled'", true)
+}
+
+// quantityByVariant sums an owner's order lines per (SKU, size).
+//
+// statusFilter is interpolated, which is safe because both call sites pass a
+// literal; dropZero omits variants that net to nothing, which only the shippable
+// read wants — a paid count of zero and an absent paid count mean the same thing
+// to the offset, whereas a netted-out variant is meaningfully "pack none of
+// these".
+func (q *querier) quantityByVariant(ctx context.Context, year types.YearSlug, ownerType types.TeamType, ownerID, statusFilter string, dropZero bool) (map[VariantKey]int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT l.productSku, l.quantity, l.attributes
+			FROM order_line l
+			JOIN orders o ON o.orderId = l.orderId
+			WHERE o.year = ? AND o.ownerType = ? AND o.ownerId = ? AND `+statusFilter,
+		year, string(ownerType), ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	qtys := map[VariantKey]int{}
+	for rows.Next() {
+		var (
+			sku      string
+			qty      int
+			attrJSON sql.NullString
+		)
+		if err := rows.Scan(&sku, &qty, &attrJSON); err != nil {
+			return nil, err
+		}
+		var attrs map[string]any
+		if attrJSON.Valid && strings.TrimSpace(attrJSON.String) != "" {
+			if err := json.Unmarshal([]byte(attrJSON.String), &attrs); err != nil {
+				// Same tolerance as listLines: a line with unreadable
+				// attributes still counts as a unit, just a sizeless one.
+				// Dropping it would re-charge a shirt somebody already bought.
+				log.Printf("order.quantityByVariant: bad attributes on a %s line for %s: %v", sku, ownerID, err)
+				attrs = nil
+			}
+		}
+		qtys[VariantKey{SKU: sku, Size: lineSize(attrs)}] += qty
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if dropZero {
+		for k, n := range qtys {
+			if n == 0 {
+				delete(qtys, k)
+			}
+		}
+	}
+	return qtys, nil
 }
 
 // PaidQuantityBySKU — see Queries.PaidQuantityBySKU.

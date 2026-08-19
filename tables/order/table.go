@@ -20,6 +20,26 @@
 // Multiple "open" orders per (year, owner) are structurally allowed; the
 // EnsureOpenOrder helper enforces the "one open order at a time" UX rule by
 // reusing an existing open order when present.
+//
+// # The order is authoritative for size
+//
+// A member roster is where a size is *entered*; the order is where it is *true*.
+// Anything that has to know which shirt to hand over — fulfillment, packing
+// lists, per-size stock when that arrives — reads the net quantity per variant
+// across the owner's non-cancelled orders, which is what ShippableByVariant
+// returns. The roster's size field is an input to the derived lines, not a
+// second answer to be consulted alongside them.
+//
+// This is worth stating because not stating it caused a bug. When paid units
+// were counted per SKU and sizes ignored, a post-payment size change cancelled
+// cleanly against the paid unit and the order fell silent about the new size —
+// correct on money, useless for shipping, and nothing anywhere claimed
+// responsibility for the discrepancy. Sizes now survive onto the order as
+// zero-sum pairs (see ApplyPaidOffset) precisely so that this package can be the
+// one place that answers the question.
+//
+// The corollary: when the roster and the order disagree, the order is right and
+// the roster is stale. Reconciliation repairs the roster.
 package order
 
 import (

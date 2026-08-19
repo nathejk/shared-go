@@ -1,0 +1,254 @@
+package order
+
+import (
+	"context"
+	"testing"
+
+	"github.com/jrgensen/cqrs/cqrstest"
+	"github.com/nathejk/shared-go/messages"
+	"github.com/nathejk/shared-go/tables"
+	"github.com/nathejk/shared-go/tables/product"
+	"github.com/nathejk/shared-go/types"
+)
+
+// syncFakeQueries is a Queries backed by one in-memory order and a paid-unit
+// map, enough to drive SetDerivedLines and SyncNeeded without a database.
+type syncFakeQueries struct {
+	order *Order
+	paid  map[VariantKey]int
+}
+
+func (f *syncFakeQueries) GetByID(context.Context, string) (*Order, error) {
+	if f.order == nil {
+		return nil, tables.ErrRecordNotFound
+	}
+	return f.order, nil
+}
+func (f *syncFakeQueries) PaidQuantityByVariant(context.Context, types.YearSlug, types.TeamType, string) (map[VariantKey]int, error) {
+	return f.paid, nil
+}
+
+// ShippableByVariant nets this fake's single order, which is what the real query
+// does across all of the owner's non-cancelled ones.
+func (f *syncFakeQueries) ShippableByVariant(context.Context, types.YearSlug, types.TeamType, string) (map[VariantKey]int, error) {
+	net := map[VariantKey]int{}
+	for k, n := range f.paid {
+		net[k] += n
+	}
+	if f.order != nil {
+		for _, l := range f.order.Lines {
+			net[VariantKey{SKU: l.ProductSKU, Size: lineSize(l.Attributes)}] += l.Quantity
+		}
+	}
+	for k, n := range net {
+		if n == 0 {
+			delete(net, k)
+		}
+	}
+	return net, nil
+}
+func (f *syncFakeQueries) PaidQuantityBySKU(context.Context, types.YearSlug, types.TeamType, string) (map[string]int, error) {
+	bySKU := map[string]int{}
+	for k, n := range f.paid {
+		bySKU[k.SKU] += n
+	}
+	return bySKU, nil
+}
+func (*syncFakeQueries) FindOpenOrder(context.Context, types.YearSlug, types.TeamType, string) (*Order, error) {
+	return nil, tables.ErrRecordNotFound
+}
+func (*syncFakeQueries) ListByOwner(context.Context, types.YearSlug, types.TeamType, string) ([]Order, error) {
+	return nil, nil
+}
+func (*syncFakeQueries) ListByYear(context.Context, types.YearSlug) ([]Order, error) { return nil, nil }
+func (*syncFakeQueries) ReservedQuantity(context.Context, types.YearSlug, string) (int, error) {
+	return 0, nil
+}
+
+// fakeCatalogue answers with an unlimited adult t-shirt whose sizes are the
+// catalogue order the reclaim step follows.
+type fakeCatalogue struct{ stock *int }
+
+func (f fakeCatalogue) GetBySKU(_ context.Context, _ types.YearSlug, sku string) (*product.Product, error) {
+	if sku != "tshirt.adult" {
+		return nil, tables.ErrRecordNotFound
+	}
+	return &product.Product{
+		SKU:       "tshirt.adult",
+		Name:      "T-shirt",
+		Kind:      product.KindMerchandise,
+		UnitPrice: 17500,
+		Sizes:     []string{"s", "m", "l", "xl", "xxl", "3xl"},
+		Stock:     f.stock,
+		Active:    true,
+	}, nil
+}
+func (fakeCatalogue) ListEligibleFor(context.Context, types.YearSlug, types.TeamType) ([]product.Product, error) {
+	return nil, nil
+}
+
+func newSyncCommander(o *Order, paid map[VariantKey]int) (*commander, *syncFakeQueries, *cqrstest.Publisher) {
+	pub := &cqrstest.Publisher{}
+	q := &syncFakeQueries{order: o, paid: paid}
+	return &commander{p: pub, q: q, products: fakeCatalogue{}, year: "2026"}, q, pub
+}
+
+func openOrder() *Order {
+	return &Order{OrderID: "order-1", Year: "2026", OwnerType: types.TeamTypeKlan, OwnerID: "team-1", Status: StatusOpen}
+}
+
+// The reported case, end to end: a member with a paid xxl asks for a 3xl. The
+// open order must state the swap and charge nothing.
+func TestSetDerivedLinesRecordsAFreeSizeChange(t *testing.T) {
+	o := openOrder()
+	c, _, pub := newSyncCommander(o, paidShirts("xxl"))
+
+	got, err := c.SetDerivedLines(context.Background(), "order-1", []DesiredLine{shirt("m-1", "3xl")})
+	if err != nil {
+		t.Fatalf("SetDerivedLines: %v", err)
+	}
+	if len(got.Lines) != 2 {
+		t.Fatalf("want the zero-sum pair, got %d lines: %+v", len(got.Lines), got.Lines)
+	}
+	if got.TotalAmount != 0 {
+		t.Errorf("TotalAmount = %d, want 0 — a size change on a paid unit is free", got.TotalAmount)
+	}
+	if got.DueAmount != 0 {
+		t.Errorf("DueAmount = %d, want 0, so no payment link is minted", got.DueAmount)
+	}
+
+	var charged, credited *Line
+	for i := range got.Lines {
+		switch got.Lines[i].Quantity {
+		case 1:
+			charged = &got.Lines[i]
+		case -1:
+			credited = &got.Lines[i]
+		}
+	}
+	if charged == nil || credited == nil {
+		t.Fatalf("want one +1 and one -1 line, got %+v", got.Lines)
+	}
+	if lineSize(charged.Attributes) != "3xl" || charged.LineTotal != 17500 {
+		t.Errorf("charge line = %+v, want +1 3xl at 17500", charged)
+	}
+	if lineSize(credited.Attributes) != "xxl" || credited.LineTotal != -17500 {
+		t.Errorf("credit line = %+v, want -1 xxl at -17500", credited)
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want one lines.changed event, got %d", len(pub.Messages))
+	}
+	var body messages.NathejkOrderLinesChanged
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.TotalAmount != 0 {
+		t.Errorf("published TotalAmount = %d, want 0", body.TotalAmount)
+	}
+}
+
+// The PRD's headline risk: if the read path and the write path disagree about the
+// target, every page load republishes the lines. SyncNeeded must report false for
+// an order SetDerivedLines just wrote.
+func TestSyncNeededIsFalseAfterSetDerivedLines(t *testing.T) {
+	o := openOrder()
+	c, q, pub := newSyncCommander(o, paidShirts("xxl"))
+	desired := []DesiredLine{shirt("m-1", "3xl")}
+
+	written, err := c.SetDerivedLines(context.Background(), "order-1", desired)
+	if err != nil {
+		t.Fatalf("SetDerivedLines: %v", err)
+	}
+	// The projection has caught up: the order now holds what was published.
+	q.order = written
+	pub.Reset()
+
+	need, err := c.SyncNeeded(context.Background(), written, desired)
+	if err != nil {
+		t.Fatalf("SyncNeeded: %v", err)
+	}
+	if need {
+		t.Fatal("SyncNeeded must be false for lines that were just written, or every GET republishes them")
+	}
+
+	// And the write path itself must be idempotent for the same input.
+	again, err := c.SetDerivedLines(context.Background(), "order-1", desired)
+	if err != nil {
+		t.Fatalf("second SetDerivedLines: %v", err)
+	}
+	if len(again.Lines) != len(written.Lines) || again.TotalAmount != written.TotalAmount {
+		t.Errorf("second call changed the order: %+v vs %+v", again.Lines, written.Lines)
+	}
+}
+
+// A credit is not interchangeable with a charge: an order holding -1 xxl where
+// +1 xxl is wanted must be reported out of sync, which is why quantity is part of
+// the comparison key.
+func TestSyncNeededDistinguishesCreditFromCharge(t *testing.T) {
+	o := openOrder()
+	o.Lines = []Line{{
+		LineID: "derived:tshirt.adult:m-1:xxl", ProductSKU: "tshirt.adult", MemberID: "m-1",
+		UnitPrice: 17500, Quantity: -1, LineTotal: -17500,
+		Origin: string(messages.LineOriginDerived), Attributes: map[string]any{"size": "xxl"},
+	}}
+	c, _, _ := newSyncCommander(o, nil)
+
+	need, err := c.SyncNeeded(context.Background(), o, []DesiredLine{shirt("m-1", "xxl")})
+	if err != nil {
+		t.Fatalf("SyncNeeded: %v", err)
+	}
+	if !need {
+		t.Error("a -1 line must not satisfy a +1 desired line")
+	}
+}
+
+// A credit must not buy stock headroom for the size replacing it: with one shirt
+// in stock and one already reserved elsewhere, a size change nets to zero units
+// and passes, but adding a second shirt does not.
+func TestCheckStockIgnoresCreditLines(t *testing.T) {
+	one := 1
+	o := openOrder()
+	c, _, _ := newSyncCommander(o, paidShirts("xxl"))
+	c.products = fakeCatalogue{stock: &one}
+
+	if _, err := c.SetDerivedLines(context.Background(), "order-1", []DesiredLine{shirt("m-1", "3xl")}); err != nil {
+		t.Fatalf("a size change should fit in stock: %v", err)
+	}
+	// Two uncovered shirts against one in stock: the credit for the swap must
+	// not make room for the genuinely new one.
+	_, err := c.SetDerivedLines(context.Background(), "order-1", []DesiredLine{shirt("m-1", "3xl"), shirt("m-2", "l"), shirt("m-3", "m")})
+	if err == nil {
+		t.Error("want ErrOutOfStock: a credit must not create stock headroom")
+	}
+}
+
+// The order is authoritative for size, so the net variant mix is the answer to
+// "which shirts does this owner get". After a free size change that must be the
+// new size only — the old one must not still be packed.
+func TestShippableNetsTheSizeChange(t *testing.T) {
+	o := openOrder()
+	c, q, _ := newSyncCommander(o, paidShirts("xxl"))
+
+	written, err := c.SetDerivedLines(context.Background(), "order-1", []DesiredLine{shirt("m-1", "3xl")})
+	if err != nil {
+		t.Fatalf("SetDerivedLines: %v", err)
+	}
+	q.order = written
+
+	net, err := q.ShippableByVariant(context.Background(), "2026", types.TeamTypeKlan, "team-1")
+	if err != nil {
+		t.Fatalf("ShippableByVariant: %v", err)
+	}
+	want := map[VariantKey]int{{SKU: "tshirt.adult", Size: "3xl"}: 1}
+	if len(net) != len(want) {
+		t.Fatalf("net = %v, want %v", net, want)
+	}
+	for k, n := range want {
+		if net[k] != n {
+			t.Errorf("net[%+v] = %d, want %d", k, net[k], n)
+		}
+	}
+	if _, stillThere := net[VariantKey{SKU: "tshirt.adult", Size: "xxl"}]; stillThere {
+		t.Error("the reclaimed xxl must net out, or fulfillment packs both shirts")
+	}
+}

@@ -52,6 +52,12 @@ func (*sagaFakeQueries) ReservedQuantity(context.Context, types.YearSlug, string
 func (*sagaFakeQueries) PaidQuantityBySKU(context.Context, types.YearSlug, types.TeamType, string) (map[string]int, error) {
 	return nil, nil
 }
+func (*sagaFakeQueries) PaidQuantityByVariant(context.Context, types.YearSlug, types.TeamType, string) (map[VariantKey]int, error) {
+	return nil, nil
+}
+func (*sagaFakeQueries) ShippableByVariant(context.Context, types.YearSlug, types.TeamType, string) (map[VariantKey]int, error) {
+	return nil, nil
+}
 
 type sagaFakePayments struct{ pmt *payment.Payment }
 

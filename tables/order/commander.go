@@ -73,6 +73,16 @@ type Commands interface {
 	// the order is not in StatusOpen.
 	SetDerivedLines(ctx context.Context, orderID string, lines []DesiredLine) (*Order, error)
 
+	// SyncNeeded reports whether the order's derived lines already say what
+	// the given desired set implies, so a caller rendering an order can skip
+	// SetDerivedLines when there is nothing to change.
+	//
+	// Use this rather than comparing lines yourself: it applies the same
+	// paid-unit offset SetDerivedLines does, so the read path and the write
+	// path cannot disagree about the target. A caller whose comparison drifts
+	// from the command republishes the order's lines on every page load.
+	SyncNeeded(ctx context.Context, o *Order, desired []DesiredLine) (bool, error)
+
 	// AddManualLine appends a single line of origin "manual" to the order.
 	// If the line's LineID is empty, a UUID is generated. Validates
 	// eligibility and stock; returns ErrNotOpen if the order is not open.
@@ -100,10 +110,16 @@ type Commands interface {
 //
 // LineID is optional. When omitted, the commander generates one:
 //
-//   - For derived lines: "derived:{ProductSKU}:{MemberID}". Derived
-//     LineIDs are stable across SetDerivedLines calls so the projector
-//     naturally upserts.
+//   - For derived lines: "derived:{ProductSKU}:{MemberID}", with the size
+//     appended for sized products so that a credit line and a charge line for
+//     the same member do not collide. Derived LineIDs are stable across
+//     SetDerivedLines calls so the projector naturally upserts.
 //   - For manual lines: a fresh UUID.
+//
+// Quantity is normally positive. A negative quantity is a credit: it reclaims a
+// unit already paid for, and is produced only by ApplyPaidOffset, always paired
+// with a positive line for the same SKU so the pair costs nothing. Zero means
+// "this line is not present".
 //
 // Attributes is an optional bag for variant data (t-shirt size, ...).
 // MemberID is *not* duplicated into Attributes — it has its own field.
@@ -179,18 +195,17 @@ func (c *commander) SetDerivedLines(ctx context.Context, orderID string, desired
 	}
 
 	// Bill by unit count, not by member identity. A team pays for a number of
-	// units per SKU (participation seats, t-shirts); the people occupying them
-	// may change over time. So the open order should only carry the desired
-	// lines *beyond* what has already been paid for that SKU. This makes a
-	// swapped member (delete + add within the paid count) cost nothing, and
-	// lets a t-shirt size change for free, while an (N+1)-th unit is still
-	// charged. Only paid orders count toward paidQty; cancelled and other open
-	// orders do not.
-	paidQty, err := c.q.PaidQuantityBySKU(ctx, c.year, o.OwnerType, o.OwnerID)
+	// units per variant (participation seats, t-shirts in a given size); the
+	// people occupying them may change over time. So the open order should only
+	// carry the desired lines *beyond* what has already been paid, plus the
+	// zero-sum pairs that record a size change on a unit already paid for. This
+	// makes a swapped member cost nothing, keeps a size change free while still
+	// stating which shirt is owed, and charges the (N+1)-th unit. Only paid
+	// orders count; cancelled and other open orders do not.
+	desired, err = c.offsetAgainstPaid(ctx, o, desired)
 	if err != nil {
 		return nil, err
 	}
-	desired = ApplyPaidOffset(desired, paidQty)
 
 	// Start from the existing manual lines (preserved across SetDerivedLines).
 	kept := make([]messages.NathejkOrder_Line, 0, len(o.Lines))
@@ -317,7 +332,7 @@ func (c *commander) buildLines(ctx context.Context, o *Order, desired []DesiredL
 	byLine := make(map[string]indexed, len(desired))
 	next := 0
 	for _, d := range desired {
-		if d.Quantity <= 0 {
+		if d.Quantity == 0 {
 			continue // a quantity of zero just means "this line is not present"
 		}
 		if d.MemberID == "" {
@@ -388,16 +403,28 @@ func (c *commander) buildLines(ctx context.Context, o *Order, desired []DesiredL
 // order is being edited (e.g. a klan changing members).
 //
 // Products with Stock == nil are unlimited and always skipped.
+//
+// Positive quantities only, on both sides. A derived credit line reclaims a paid
+// unit of another size and must not create headroom for the unit replacing it:
+// the pair nets to zero, so netting them would let a size change pass a stock
+// check that the replacement size alone would fail. Both sums are filtered, not
+// just the new one — filtering only newQty while existingQty still netted would
+// overstate reservedElsewhere for an order that already holds a credit, and block
+// it on stock it is not asking for.
 func (c *commander) checkStock(ctx context.Context, o *Order, full []messages.NathejkOrder_Line) error {
 	// Aggregate the new desired quantity per SKU.
 	newQtyBySKU := map[string]int{}
 	for _, l := range full {
-		newQtyBySKU[l.ProductSKU] += l.Quantity
+		if l.Quantity > 0 {
+			newQtyBySKU[l.ProductSKU] += l.Quantity
+		}
 	}
 	// Aggregate this order's previous quantity per SKU.
 	existingQtyBySKU := map[string]int{}
 	for _, l := range o.Lines {
-		existingQtyBySKU[l.ProductSKU] += l.Quantity
+		if l.Quantity > 0 {
+			existingQtyBySKU[l.ProductSKU] += l.Quantity
+		}
 	}
 
 	for sku, newQty := range newQtyBySKU {
@@ -451,50 +478,234 @@ func (c *commander) publishLinesChanged(orderID string, lines []messages.Nathejk
 	return c.p.Publish(msg)
 }
 
-// ApplyPaidOffset removes already-paid units from a desired line set so the
-// open order only carries (and bills) the units beyond what has already been
-// paid. paidQty is the paid quantity per productSKU (see
-// Queries.PaidQuantityBySKU).
+// offsetAgainstPaid gathers what ApplyPaidOffset needs — the owner's paid units
+// per variant, and the catalogue size order for each SKU involved — and applies
+// it.
 //
-// Billing is by *count*, not member identity: a team pays for a number of
-// participation seats and t-shirts, and the people occupying them may change.
-// So for each SKU we drop up to paidQty[sku] of the desired lines; whichever
-// lines survive are the ones charged. This is what makes a swapped member cost
-// nothing (delete + add within the paid count) and a t-shirt size change free,
-// while still charging the (N+1)-th unit.
+// Split out so SyncNeeded can compute the identical target: the two are the write
+// path and the read path of the same decision, and any difference between them
+// shows up as an order that republishes its lines on every page load.
+func (c *commander) offsetAgainstPaid(ctx context.Context, o *Order, desired []DesiredLine) ([]DesiredLine, error) {
+	paid, err := c.q.PaidQuantityByVariant(ctx, c.year, o.OwnerType, o.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	sizeOrder, err := c.sizeOrder(ctx, o.Year, desired, paid)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPaidOffset(desired, paid, sizeOrder), nil
+}
+
+// sizeOrder reads the catalogue sizes of every SKU that could take part in a
+// reclaim, so the pairing order is the catalogue's and not the map's.
 //
-// The function is pure so the show-path sync check and the SetDerivedLines
-// command compute the same target from the same input.
-func ApplyPaidOffset(desired []DesiredLine, paidQty map[string]int) []DesiredLine {
-	if len(paidQty) == 0 {
-		return desired
-	}
-	remaining := make(map[string]int, len(paidQty))
-	for sku, qty := range paidQty {
-		remaining[sku] = qty
-	}
-	filtered := make([]DesiredLine, 0, len(desired))
+// A SKU missing from the catalogue is not an error here: buildLines validates the
+// desired lines against the catalogue immediately afterwards and reports it
+// properly, whereas failing here would turn a retired product into an opaque
+// error from the offset step.
+func (c *commander) sizeOrder(ctx context.Context, year types.YearSlug, desired []DesiredLine, paid map[VariantKey]int) (map[string][]string, error) {
+	skus := map[string]struct{}{}
 	for _, d := range desired {
-		if remaining[d.ProductSKU] >= d.Quantity {
-			remaining[d.ProductSKU] -= d.Quantity
+		skus[d.ProductSKU] = struct{}{}
+	}
+	for k := range paid {
+		skus[k.SKU] = struct{}{}
+	}
+	out := make(map[string][]string, len(skus))
+	for sku := range skus {
+		p, err := c.products.GetBySKU(ctx, year, sku)
+		if err != nil {
 			continue
 		}
-		filtered = append(filtered, d)
+		out[sku] = p.Sizes
 	}
-	return filtered
+	return out, nil
+}
+
+// SyncNeeded reports whether o's derived lines already say what desired implies,
+// so a caller rendering an order can skip SetDerivedLines when there is nothing
+// to change.
+//
+// It exists so that the read path cannot drift from the write path. Both apply
+// the same paid-unit offset and compare the same keys; a caller reimplementing
+// the comparison would eventually disagree with SetDerivedLines, and the symptom
+// — a lines.changed event on every GET — is easy to cause and hard to notice.
+//
+// Keys on (sku, memberId, size, quantity). Quantity is part of the key because a
+// credit line and a charge line differ only in its sign, and treating -1 xxl as
+// interchangeable with +1 xxl would report "in sync" for an order that says the
+// opposite of what is wanted.
+func (c *commander) SyncNeeded(ctx context.Context, o *Order, desired []DesiredLine) (bool, error) {
+	target, err := c.offsetAgainstPaid(ctx, o, desired)
+	if err != nil {
+		return false, err
+	}
+
+	want := map[string]int{}
+	for _, d := range target {
+		if d.Quantity == 0 {
+			continue
+		}
+		want[lineKey(d.ProductSKU, d.MemberID, lineSize(d.Attributes), d.Quantity)]++
+	}
+	have := map[string]int{}
+	for _, l := range o.Lines {
+		if messages.LineOrigin(l.Origin) != messages.LineOriginDerived {
+			continue
+		}
+		have[lineKey(l.ProductSKU, l.MemberID, lineSize(l.Attributes), l.Quantity)]++
+	}
+	if len(want) != len(have) {
+		return true, nil
+	}
+	for k, n := range want {
+		if have[k] != n {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func lineKey(sku, memberID, size string, qty int) string {
+	return fmt.Sprintf("%s|%s|%s|%d", sku, memberID, size, qty)
+}
+
+// ApplyPaidOffset removes already-paid units from a desired line set, and pairs
+// what is left against paid units of a different size so that a size change on
+// an already-paid unit costs nothing and still says what has to be shipped.
+//
+// Billing is by *count*, not member identity: a team pays for a number of
+// participation seats and t-shirts, and the people occupying them may change. So
+// for each variant we drop up to paid[variant] of the desired lines; whichever
+// lines survive are the ones charged. That is what makes a swapped member cost
+// nothing and still charges the (N+1)-th unit.
+//
+// Size, however, is not fungible. Counting paid units per SKU alone made a size
+// change free by making it *invisible*: the desired 3xl cancelled against the
+// paid xxl and the open order ended up empty, so the only place fulfillment can
+// read "which shirts does this team get" said xxl forever. Units are therefore
+// counted per (SKU, size), and an uncovered desired unit that can claim a paid
+// unit of another size emits two lines instead of none:
+//
+//	tshirt.adult  qty -1  {"size":"xxl"}   the unit being reclaimed
+//	tshirt.adult  qty +1  {"size":"3xl"}   the unit now owed
+//
+// Both are priced from the catalogue, so the pair sums to zero and nothing is
+// charged — the payer's total is unchanged and the order states the swap.
+//
+// Paid units left over once every desired unit is covered produce nothing: a
+// reduction is not a size change, and this mechanism does not refund.
+//
+// sizeOrder maps a SKU to its catalogue sizes (product.Product.Sizes) and decides
+// which paid size gets reclaimed when several could be. It is passed in rather
+// than looked up because this function must stay pure: the show-path sync check
+// and SetDerivedLines have to compute the same target from the same input, or the
+// order republishes its lines on every read.
+func ApplyPaidOffset(desired []DesiredLine, paid map[VariantKey]int, sizeOrder map[string][]string) []DesiredLine {
+	if len(paid) == 0 {
+		return desired
+	}
+
+	// remaining[sku][size] is the paid units not yet accounted for.
+	remaining := map[string]map[string]int{}
+	for k, qty := range paid {
+		if qty <= 0 {
+			continue
+		}
+		if remaining[k.SKU] == nil {
+			remaining[k.SKU] = map[string]int{}
+		}
+		remaining[k.SKU][k.Size] += qty
+	}
+
+	// Pass 1: cancel same-variant matches. Whole lines, as before — going
+	// unit-level here would change what a partly-covered multi-unit line costs,
+	// and this is a representation fix, not a pricing one.
+	uncovered := make([]DesiredLine, 0, len(desired))
+	for _, d := range desired {
+		size := lineSize(d.Attributes)
+		if remaining[d.ProductSKU][size] >= d.Quantity && d.Quantity > 0 {
+			remaining[d.ProductSKU][size] -= d.Quantity
+			continue
+		}
+		uncovered = append(uncovered, d)
+	}
+
+	// Pass 2: pair each still-uncovered line with a paid unit of another size,
+	// in input order so the output does not depend on map iteration.
+	out := make([]DesiredLine, 0, len(uncovered)*2)
+	for _, d := range uncovered {
+		out = append(out, d)
+		if d.Quantity <= 0 {
+			continue
+		}
+		size := lineSize(d.Attributes)
+		if size == "" {
+			// A sizeless SKU has nothing to swap: an uncovered participation
+			// seat is a genuinely new seat and is charged.
+			continue
+		}
+		if credit, ok := reclaim(remaining[d.ProductSKU], size, d, sizeOrder[d.ProductSKU]); ok {
+			out = append(out, credit)
+		}
+	}
+	return out
+}
+
+// reclaim takes d.Quantity paid units of some size other than want out of
+// remaining, and returns the credit line that gives them back. It reports false
+// when no single other size can cover the line, in which case the caller charges
+// full price and nothing is reclaimed.
+//
+// One size per line, deliberately: splitting a 2-unit line across a reclaimed xl
+// and a reclaimed l would produce two credits whose pairing with the charge is no
+// longer readable, and real derived lines are one unit per member.
+func reclaim(remaining map[string]int, want string, d DesiredLine, catalogue []string) (DesiredLine, bool) {
+	for _, size := range orderedSizes(remaining, catalogue) {
+		if size == want || remaining[size] < d.Quantity {
+			continue
+		}
+		remaining[size] -= d.Quantity
+
+		// The credit copies the desired line's attributes so it carries any
+		// other variant dimension a SKU might grow, and overrides the size with
+		// the one being handed back. It borrows the desired line's MemberID:
+		// buildLines requires one, and the member whose change caused the
+		// reclaim is the most useful answer to "why is this here".
+		attrs := make(map[string]any, len(d.Attributes)+1)
+		for k, v := range d.Attributes {
+			attrs[k] = v
+		}
+		attrs[sizeAttribute] = size
+
+		return DesiredLine{
+			ProductSKU: d.ProductSKU,
+			MemberID:   d.MemberID,
+			Quantity:   -d.Quantity,
+			Attributes: attrs,
+		}, true
+	}
+	return DesiredLine{}, false
 }
 
 // defaultLineID generates a stable LineID when a caller didn't provide one.
 //
-// For derived lines we use "derived:{sku}:{memberId}" so successive
-// SetDerivedLines calls upsert into the same row rather than racking up
-// orphans. MemberID is guaranteed non-empty by the buildLines validator,
-// so this is always a deterministic, collision-free key.
+// For derived lines we use "derived:{sku}:{memberId}:{size}" so successive
+// SetDerivedLines calls upsert into the same row rather than racking up orphans.
+// MemberID is guaranteed non-empty by the buildLines validator, so this is always
+// a deterministic, collision-free key.
 //
-// For manual lines a UUID is fine — RemoveLine takes the LineID as an
-// argument so callers don't need to derive it.
+// The size is part of the key because a size change puts two lines for the same
+// SKU and member on one order — a credit for the size handed back and a charge
+// for the size now wanted — and without it they would collide on one lineId and
+// the pair would collapse to whichever came last. The size is omitted for
+// sizeless SKUs so that participation lineIds keep the form they have today.
 func defaultLineID(origin messages.LineOrigin, d DesiredLine) string {
 	if origin == messages.LineOriginDerived {
+		if size := lineSize(d.Attributes); size != "" {
+			return fmt.Sprintf("derived:%s:%s:%s", d.ProductSKU, d.MemberID, size)
+		}
 		return fmt.Sprintf("derived:%s:%s", d.ProductSKU, d.MemberID)
 	}
 	return uuid.NewString()

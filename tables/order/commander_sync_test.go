@@ -2,6 +2,8 @@ package order
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/jrgensen/cqrs/cqrstest"
@@ -250,5 +252,129 @@ func TestShippableNetsTheSizeChange(t *testing.T) {
 	}
 	if _, stillThere := net[VariantKey{SKU: "tshirt.adult", Size: "xxl"}]; stillThere {
 		t.Error("the reclaimed xxl must net out, or fulfillment packs both shirts")
+	}
+}
+
+// An order recording only a free size change owes nothing, so no payment will
+// ever arrive to close it and the saga will never fire. Settle is how it stops
+// being mutable.
+func TestSettleFreezesAFreeExchange(t *testing.T) {
+	o := openOrder()
+	c, q, pub := newSyncCommander(o, paidShirts("xxl"))
+
+	written, err := c.SetDerivedLines(context.Background(), "order-1", []DesiredLine{shirt("m-1", "3xl")})
+	if err != nil {
+		t.Fatalf("SetDerivedLines: %v", err)
+	}
+	q.order = written
+	pub.Reset()
+
+	settled, err := c.Settle(context.Background(), "order-1")
+	if err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if settled.Status != StatusPaid {
+		t.Errorf("Status = %q, want %q", settled.Status, StatusPaid)
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want one order.paid event, got %d", len(pub.Messages))
+	}
+	if !pub.Messages[0].Subject().Match("NATHEJK.2026.order.*.paid") {
+		t.Errorf("unexpected subject %q", pub.Subjects()[0])
+	}
+	var body messages.NathejkOrderPaid
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.PaidAmount != 0 {
+		t.Errorf("PaidAmount = %d, want 0 — nothing was paid", body.PaidAmount)
+	}
+}
+
+func TestSettleRefusesWhatItMustNotFreeze(t *testing.T) {
+	shirtLine := func(size string, qty int) Line {
+		return Line{
+			LineID: "derived:tshirt.adult:m-1:" + size, ProductSKU: "tshirt.adult", MemberID: "m-1",
+			UnitPrice: 17500, Quantity: qty, LineTotal: 17500 * qty,
+			Origin: string(messages.LineOriginDerived), Attributes: map[string]any{"size": size},
+		}
+	}
+
+	t.Run("an order that owes money", func(t *testing.T) {
+		o := openOrder()
+		o.Lines = []Line{shirtLine("l", 1)}
+		o.TotalAmount = 17500
+		c, _, pub := newSyncCommander(o, nil)
+
+		if _, err := c.Settle(context.Background(), "order-1"); !errors.Is(err, ErrOrderNotFree) {
+			t.Errorf("err = %v, want ErrOrderNotFree: settling is not a way to get goods for free", err)
+		}
+		if len(pub.Messages) != 0 {
+			t.Errorf("nothing should be published, got %v", pub.Subjects())
+		}
+	})
+
+	t.Run("an empty order", func(t *testing.T) {
+		o := openOrder()
+		c, _, pub := newSyncCommander(o, nil)
+
+		if _, err := c.Settle(context.Background(), "order-1"); !errors.Is(err, ErrEmptyOrder) {
+			t.Errorf("err = %v, want ErrEmptyOrder", err)
+		}
+		if len(pub.Messages) != 0 {
+			t.Errorf("nothing should be published, got %v", pub.Subjects())
+		}
+	})
+}
+
+// A repeated save must not fail, so settling an order that is no longer open is a
+// no-op rather than an error.
+func TestSettleIsIdempotent(t *testing.T) {
+	o := openOrder()
+	o.Status = StatusPaid
+	c, _, pub := newSyncCommander(o, nil)
+
+	got, err := c.Settle(context.Background(), "order-1")
+	if err != nil {
+		t.Fatalf("Settle on a settled order should be a no-op, got %v", err)
+	}
+	if got.Status != StatusPaid {
+		t.Errorf("Status = %q, want it left alone", got.Status)
+	}
+	if len(pub.Messages) != 0 {
+		t.Errorf("nothing should be republished, got %v", pub.Subjects())
+	}
+}
+
+// The property §8.1b calls load-bearing: once a settled exchange counts as paid,
+// the paid count must include the credit, so the returned size nets to zero and
+// the new size becomes the paid one. A positive-only paid count would leave the
+// old size on the books and hand the owner a free second shirt on their next
+// change.
+func TestSettledExchangeNetsIntoThePaidCount(t *testing.T) {
+	// Paid: one xxl. Settled: +1 3xl, -1 xxl. Summed raw, as
+	// PaidQuantityByVariant does.
+	paid := map[VariantKey]int{
+		{SKU: "tshirt.adult", Size: "xxl"}: 1, // the original paid order
+	}
+	for _, l := range []struct {
+		size string
+		qty  int
+	}{{"3xl", 1}, {"xxl", -1}} { // the settled exchange
+		paid[VariantKey{SKU: "tshirt.adult", Size: l.size}] += l.qty
+	}
+	if got := paid[VariantKey{SKU: "tshirt.adult", Size: "xxl"}]; got != 0 {
+		t.Fatalf("paid xxl = %d, want 0 — the returned size must net out", got)
+	}
+	if got := paid[VariantKey{SKU: "tshirt.adult", Size: "3xl"}]; got != 1 {
+		t.Fatalf("paid 3xl = %d, want 1", got)
+	}
+
+	// A further change to l therefore reclaims the 3xl, not the xxl, and stays
+	// free.
+	got := summary(ApplyPaidOffset([]DesiredLine{shirt("m-1", "l")}, paid, adultSizes))
+	want := []string{"tshirt.adult:l:+1", "tshirt.adult:3xl:-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v — the second change must reclaim the size actually held", got, want)
 	}
 }

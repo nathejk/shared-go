@@ -96,6 +96,21 @@ type Commands interface {
 	// Cancel transitions an open order to StatusCancelled. Reason is a
 	// free-form string surfaced in the read model for support / audit.
 	Cancel(ctx context.Context, orderID, reason string) (*Order, error)
+
+	// Settle freezes an open order that costs nothing, transitioning it to
+	// StatusPaid with a paid amount of 0.
+	//
+	// An order recording only a free size change owes no money, so no payment
+	// will ever arrive to close it and the payment saga — which reacts to money
+	// — will never fire. Left open, it stays mutable, and a later edit would
+	// silently rewrite what an already-shipped exchange said. Settle is how a
+	// caller says "this is what was agreed" without money changing hands.
+	//
+	// Refuses to settle an order that owes anything: freezing an unpaid order
+	// would be a way to get goods for free, and only the saga may mark a paid
+	// order paid. Settling an order that is already not open is a no-op, so a
+	// repeated save cannot fail.
+	Settle(ctx context.Context, orderID string) (*Order, error)
 }
 
 // DesiredLine is the input shape callers pass to SetDerivedLines /
@@ -311,6 +326,62 @@ func (c *commander) Cancel(ctx context.Context, orderID, reason string) (*Order,
 	}
 	o.Status = StatusCancelled
 	o.CancelReason = reason
+	return o, nil
+}
+
+// ErrEmptyOrder is returned by Settle for an order with no lines. An empty order
+// records no agreement, so freezing one would only make a placeholder permanent.
+var ErrEmptyOrder = errors.New("order has no lines")
+
+// ErrOrderNotFree is returned by Settle for an order whose total is not zero.
+//
+// Settling is not a payment. An order that owes money reaches StatusPaid exactly
+// one way — the payment saga, after money has actually arrived — and letting a
+// command shortcut that would turn "freeze this agreement" into "take these goods
+// for nothing".
+var ErrOrderNotFree = errors.New("order total is not zero")
+
+// Settle — see Commands.Settle.
+//
+// The test is the order's *value*, not what is on it, which has a consequence
+// worth knowing before adding a zero-priced product to the catalogue: a line for
+// a genuinely free product would also be settleable, and would then count as paid
+// in every downstream sum over paid orders — hq's seat count, for one. Today only
+// zero-sum exchange pairs can total zero, because any surviving participation or
+// merchandise line costs money and makes the order unsettleable.
+func (c *commander) Settle(ctx context.Context, orderID string) (*Order, error) {
+	o, err := c.q.GetByID(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	// Idempotent rather than an error: the caller is a user action that may be
+	// repeated (a second save, a double-submitted form), and an order that is
+	// already settled is the outcome that action wanted.
+	if o.Status != StatusOpen {
+		return o, nil
+	}
+	if len(o.Lines) == 0 {
+		return nil, ErrEmptyOrder
+	}
+	if o.TotalAmount != 0 {
+		return nil, fmt.Errorf("%d: %w", o.TotalAmount, ErrOrderNotFree)
+	}
+
+	// The same event the saga publishes, with a paid amount of zero. No new event
+	// type and no projector change: handlePaid updates WHERE status='open', so a
+	// replayed settle is a no-op.
+	body := messages.NathejkOrderPaid{
+		OrderID:    orderID,
+		PaidAmount: 0,
+		Timestamp:  time.Now(),
+	}
+	subj := cqrs.SubjectFromStr(fmt.Sprintf("NATHEJK:%s.order.%s.paid", o.Year, orderID))
+	msg := c.p.MessageFunc()(subj)
+	msg.SetBody(&body)
+	if err := c.p.Publish(msg); err != nil {
+		return nil, err
+	}
+	o.Status = StatusPaid
 	return o, nil
 }
 

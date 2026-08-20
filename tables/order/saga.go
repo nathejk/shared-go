@@ -39,11 +39,17 @@ const DefaultSagaSettle = 2 * time.Second
 const DefaultSagaAttempts = 5
 
 // saga listens for payment events and transitions the corresponding order
-// to status="paid" once cumulative payments cover its total. This is the
-// only path by which orders reach StatusPaid; once there, the
+// to status="paid" once cumulative payments cover its total. Once there, the
 // SetDerivedLines / AddManualLine / RemoveLine / Cancel commands all
 // reject mutations with ErrNotOpen, giving the immutability guarantee
 // users asked for.
+//
+// This is the only path by which an order that *owes money* reaches StatusPaid.
+// An order that owes nothing — one recording a free size change, say — will never
+// see a payment, so Commands.Settle publishes the same event with a paid amount
+// of zero. The two cannot be confused: Settle refuses a non-zero total, and the
+// TotalAmount <= 0 guard in attemptTransition keeps the saga from settling a free
+// order on the back of some unrelated payment.
 //
 // The saga is idempotent at multiple layers:
 //

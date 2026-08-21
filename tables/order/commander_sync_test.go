@@ -378,3 +378,31 @@ func TestSettledExchangeNetsIntoThePaidCount(t *testing.T) {
 		t.Errorf("got %v, want %v — the second change must reclaim the size actually held", got, want)
 	}
 }
+
+// A free crew signup settles too. participation.crew is priced at 0 because crew
+// are volunteers, so a crew order is complete the moment it is derived: nothing is
+// outstanding and no payment will arrive. Settle keys on the order's value, which
+// is why this works without a special case — and this test exists because an
+// earlier comment claimed only zero-sum exchange pairs could total zero.
+func TestSettleFreesignupOrder(t *testing.T) {
+	o := openOrder()
+	o.OwnerType = types.TeamTypeCrew
+	o.Lines = []Line{{
+		LineID: "derived:participation.crew:m-1", ProductSKU: "participation.crew", MemberID: "m-1",
+		UnitPrice: 0, Quantity: 1, LineTotal: 0,
+		Origin: string(messages.LineOriginDerived),
+	}}
+	o.TotalAmount = 0
+	c, _, pub := newSyncCommander(o, nil)
+
+	settled, err := c.Settle(context.Background(), "order-1")
+	if err != nil {
+		t.Fatalf("a free crew order should settle: %v", err)
+	}
+	if settled.Status != StatusPaid {
+		t.Errorf("Status = %q, want %q", settled.Status, StatusPaid)
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want one order.paid event, got %d", len(pub.Messages))
+	}
+}

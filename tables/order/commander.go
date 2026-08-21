@@ -343,12 +343,20 @@ var ErrOrderNotFree = errors.New("order total is not zero")
 
 // Settle — see Commands.Settle.
 //
-// The test is the order's *value*, not what is on it, which has a consequence
-// worth knowing before adding a zero-priced product to the catalogue: a line for
-// a genuinely free product would also be settleable, and would then count as paid
-// in every downstream sum over paid orders — hq's seat count, for one. Today only
-// zero-sum exchange pairs can total zero, because any surviving participation or
-// merchandise line costs money and makes the order unsettleable.
+// The test is the order's *value*, not what is on it, and deliberately so: an
+// order that owes nothing has no payment to wait for, which is exactly the
+// condition under which freezing it deprives nobody. Two kinds of order qualify
+// today, and both should settle:
+//
+//   - an exchange, whose zero-sum pair records a size change costing nothing;
+//   - a free signup — participation.crew is priced at 0, because crew are
+//     volunteers, so a crew order is complete the moment it is derived.
+//
+// The consequence is that a settled order counts as paid in any sum over paid
+// orders. For a free crew signup that is the right answer: nothing is outstanding.
+// Before pricing an existing product at zero, though, check what those sums are
+// used for — orders for it would begin settling, and "paid" would start including
+// them.
 func (c *commander) Settle(ctx context.Context, orderID string) (*Order, error) {
 	o, err := c.q.GetByID(ctx, orderID)
 	if err != nil {

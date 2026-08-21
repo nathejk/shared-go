@@ -238,6 +238,9 @@ the `tilmelding` work in §8.2.
       `StatusPaid`. Without it such an order stays open forever — no payment will
       arrive to close it — and a later edit would silently rewrite what an
       already-shipped exchange said. See §8.1b.
+- [x] The same applies to any order that owes nothing, not just exchanges: a free
+      crew signup (`participation.crew` is priced 0) settles for the same reason
+      and by the same code path.
 - [x] Settling is never a side effect of a read. `SetDerivedLines` does not
       settle, so the BFF's self-healing GET cannot transition an order; the
       trigger belongs to the user's action.
@@ -498,16 +501,29 @@ charge, and a credit not creating stock headroom.
 **Audit note, confirmed rather than assumed:** `hq` `patruljenumber/saga.go`
 (`paidSeatsFor`) sums `l.Quantity` over orders with `Status == StatusPaid`,
 filtered to `Kind == KindParticipation` SKUs via `participationSKUs`. Settled
-orders now join that set. A participation line only survives the offset when it is
-unpaid, which gives the order a non-zero total and makes it unsettleable — so a
-settled order can carry nothing but zero-sum t-shirt pairs, which are merchandise
-and filtered out. The saga is unaffected.
+orders now join that set, so it is worth stating why the saga is unaffected.
 
-The rule being *value*-based rather than *content*-based is the caveat: a
-genuinely free (0 kr) participation product would make an order settleable, and
-its seats would then count as paid in that sum. Nothing in the catalogue is priced
-at zero today. This is recorded on `Settle`'s doc comment, where someone adding
-such a product is likeliest to read it.
+It is scoped to patrulje: `ListByOwner(…, types.TeamTypePatrulje, …)` and
+`ListEligibleFor(…, types.TeamTypePatrulje)`, plus an `o.OwnerType !=
+types.TeamTypePatrulje` guard. Patrulje participation is priced, so a patrulje
+order carrying a surviving participation line owes money and cannot be settled;
+the only patrulje orders that can settle are zero-sum t-shirt exchanges, whose
+lines are merchandise and filtered out.
+
+**Correction.** An earlier version of this note argued that no participation line
+can survive the offset at a zero total, on the grounds that participation always
+costs money. That is false: `participation.crew` is priced at **0** in
+`tables/product/seeds_2026.go`, because crew are volunteers. A crew order with an
+unpaid participation line therefore totals zero and *is* settleable — which is the
+wanted outcome, since nothing is outstanding, but not for the reason given. The
+saga is unaffected because crew orders have a different owner type and
+`participation.crew` is eligible only for `crew`, so neither the SKU set nor the
+order set ever includes them.
+
+The rule is therefore *value*-based with no content guarantee behind it: any
+product priced at zero makes its orders settleable, and "paid" begins to include
+them. That is recorded on `Settle`'s doc comment, where someone pricing a product
+at zero is likeliest to read it.
 
 ### 8.2 tilmelding — BFF
 

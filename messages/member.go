@@ -59,7 +59,7 @@ type NathejkMemberAdded struct {
 // for opposite responses: re-ask the member, versus update the register and leave the member alone.
 type NathejkMemberVerified struct {
 	MemberID types.MemberID `json:"memberId"`
-	Year     string         `json:"year"`
+	Year     types.YearSlug `json:"year"`
 
 	// PhoneParentAcknowledged is normalized. Never empty: a verification that names no number cannot
 	// be checked for staleness later, so it would be a permanent tick for a phone nobody agreed

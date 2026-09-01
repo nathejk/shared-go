@@ -26,9 +26,12 @@ const (
 	// SectionFlagSelfAssignable allows a crew member to join the section on
 	// their own, without being assigned to it by someone else.
 	SectionFlagSelfAssignable SectionFlag = "selfassignable"
-	// SectionFlagSosAssignable allows Trailside assistence (Nødtelefonen) to assign tasks to the section.
+	// SectionFlagSosAssignable allows Trailside assistance (Nødtelefonen) to
+	// assign SOS tasks to the section.
 	SectionFlagSosAssignable SectionFlag = "sosassignable"
-	// SectionFlagDispatchable allows members of the section to be dispatched
-	// on tasks.
+	// SectionFlagDispatchable makes the section available to the dispatch
+	// interface in the HQ repo, which connects SOS tasks to tours assigned to
+	// the section. Such sections most often also have a vehicle at their
+	// disposal.
 	SectionFlagDispatchable SectionFlag = "dispatchable"
 )

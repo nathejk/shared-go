@@ -12,5 +12,9 @@ CREATE TABLE IF NOT EXISTS patrulje (
     contactEmail VARCHAR(99) NOT NULL DEFAULT "",
     contactRole VARCHAR(99) NOT NULL DEFAULT "",
     signupStatus VARCHAR(9) NOT NULL DEFAULT "",
-    PRIMARY KEY (teamId)
+    PRIMARY KEY (teamId),
+    -- The patrol list and started-teams select on year + signupStatus, and
+    -- AssignedNumbers on year + teamNumber <> ''. The PK (teamId) serves neither.
+    KEY idx_patrulje_year_status (year, signupStatus),
+    KEY idx_patrulje_year_number (year, teamNumber)
 );

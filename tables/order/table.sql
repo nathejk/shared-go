@@ -10,7 +10,11 @@ CREATE TABLE IF NOT EXISTS orders (
     createdAt     VARCHAR(99),
     changedAt     VARCHAR(99),
     PRIMARY KEY (orderId),
-    INDEX idx_orders_owner (year, ownerType, ownerId, status)
+    INDEX idx_orders_owner (year, ownerType, ownerId, status),
+    -- idx_orders_owner leads with year, so reads that know only the owner (the
+    -- payment sums in hq's personnel/query.go, and the klan list's payment union)
+    -- cannot use it. Narrow key for those.
+    INDEX idx_orders_owner_id (ownerId)
 );
 
 CREATE TABLE IF NOT EXISTS order_line (

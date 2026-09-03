@@ -14,5 +14,10 @@ CREATE TABLE IF NOT EXISTS spejder (
     `returning` TINYINT NOT NULL,
     createdAt VARCHAR(99) NOT NULL,
     updatedAt VARCHAR(99) NOT NULL,
-    PRIMARY KEY (year, memberId)
+    PRIMARY KEY (year, memberId),
+    -- Read by teamId (member count, t-shirt count), which the PK (year, memberId)
+    -- cannot serve. teamId leads so it also serves GROUP BY teamId in the patrol
+    -- list's pre-grouped member aggregate; year trails to keep per-year lookups
+    -- index-only.
+    KEY idx_spejder_team (teamId, year)
 );

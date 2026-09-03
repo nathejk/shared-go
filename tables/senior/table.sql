@@ -14,5 +14,8 @@ CREATE TABLE IF NOT EXISTS senior (
     diet VARCHAR(9) NOT NULL DEFAULT '',
     createdAt VARCHAR(99) NOT NULL,
     updatedAt VARCHAR(99) NOT NULL,
-    PRIMARY KEY (year, memberId)
+    PRIMARY KEY (year, memberId),
+    -- Read by teamId (klan member count), which the PK (year, memberId) cannot
+    -- serve. teamId leads so it also serves the klan list's GROUP BY teamId.
+    KEY idx_senior_team (teamId, year)
 );

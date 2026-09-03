@@ -9,5 +9,8 @@ CREATE TABLE IF NOT EXISTS klan (
     reservedMemberCount INT NOT NULL DEFAULT 0,
     signupStatus VARCHAR(19) NOT NULL DEFAULT "",
     lok VARCHAR(9) NOT NULL DEFAULT "",
-    PRIMARY KEY (teamId)
+    PRIMARY KEY (teamId),
+    -- The klan list selects on year and signupStatus != ''; the PK (teamId) is
+    -- useless for it.
+    KEY idx_klan_year_status (year, signupStatus)
 );

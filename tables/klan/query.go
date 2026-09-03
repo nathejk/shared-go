@@ -88,14 +88,39 @@ func (q *querier) GetAll(ctx context.Context, f Filter) ([]Klan, error) {
 	// this entity does not own and read no column from. The predicate is klan's
 	// own, so it belongs in the WHERE clause.
 	where = append(where, "t.signupStatus != ''")
+	// Aggregates are joined as pre-grouped derived tables rather than computed as
+	// correlated subqueries per row. The correlated form ran a COUNT over `senior`
+	// plus a payment sum that itself contained a LEFT JOIN on `orders` once per
+	// klan, against tables that carried no index able to serve either — so this was
+	// O(klaner × rows). The identical shape in the patrol list crossed its 3-second
+	// budget in production and answered 500; this is the same fix, and the keys the
+	// plan now needs live in tables/{senior,payment,klan,order}/table.sql.
+	//
+	// The payment side unions the two ways a payment reaches a team — straight to
+	// the teamId (older years) or via an order owned by it — into one keyed set
+	// before summing, which is the same set the OR described. UNION rather than
+	// UNION ALL so a team whose orderId equals its teamId still contributes its
+	// payment once, as the OR did. `orders` is deliberately not filtered by
+	// ownerType: the original predicate was `o.ownerId = t.teamId` alone, and rows
+	// for other owner types cannot match a klan teamId anyway.
 	query := `SELECT t.teamId, t.name, t.groupName, t.korps, t.signupStatus, t.lok,
-			(SELECT COUNT(*) FROM senior s where t.teamId = s.teamId) memberCount,
-			(SELECT COALESCE(SUM(pmt.amount), 0)
-				FROM payment pmt
-				LEFT JOIN orders o ON o.orderId = pmt.orderForeignKey
-				WHERE pmt.status IN ('reserved', 'received')
-				  AND (pmt.orderForeignKey = t.teamId OR o.ownerId = t.teamId)) as paidAmount
+			COALESCE(m.memberCount, 0) memberCount,
+			COALESCE(pay.paidAmount, 0) paidAmount
 		FROM klan t
+		LEFT JOIN (
+			SELECT s.teamId, COUNT(*) memberCount FROM senior s GROUP BY s.teamId
+		) m ON m.teamId = t.teamId
+		LEFT JOIN (
+			SELECT k.teamId, SUM(pmt.amount) paidAmount
+			FROM (
+				SELECT o.ownerId teamId, o.orderId foreignKey FROM orders o
+				UNION
+				SELECT k2.teamId, k2.teamId FROM klan k2
+			) k
+			JOIN payment pmt ON pmt.orderForeignKey = k.foreignKey
+				AND pmt.status IN ('reserved', 'received')
+			GROUP BY k.teamId
+		) pay ON pay.teamId = t.teamId
 		WHERE ` + strings.Join(where, " AND ")
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {

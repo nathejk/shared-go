@@ -12,5 +12,10 @@ CREATE TABLE IF NOT EXISTS payment (
     orderForeignKey VARCHAR(99) NOT NULL DEFAULT "",
     orderType VARCHAR(99) NOT NULL DEFAULT "",
     operations JSON NOT NULL DEFAULT ('[]'),
-    PRIMARY KEY (reference)
+    PRIMARY KEY (reference),
+    -- Every paid-amount sum joins payment on orderForeignKey and filters
+    -- status IN ('reserved','received'); the PK (reference) serves neither.
+    KEY idx_payment_order (orderForeignKey, status),
+    -- Per-year status reporting (paid/pending totals for a season).
+    KEY idx_payment_year_status (year, status)
 );

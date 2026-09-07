@@ -159,7 +159,7 @@ func (c *commander) Request(ch Charge) (string, error) {
 		Amount:          int(ch.Amount.Value),
 		Currency:        string(ch.Amount.Currency),
 		Timestamp:       time.Now(),
-		Method:          "mobilepay",
+		Method:          types.PaymentMethodMobilePay,
 		OrderLines:      messageLines(lines),
 		OrderForeignKey: ch.OrderID,
 		OrderType:       OrderTypeOrder,

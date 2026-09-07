@@ -1,11 +1,11 @@
 # 157 — [shared-go] Typed payment method with an internal-transfer value
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Created:** 2026-09-07
-**Picked up by:**
-**Started:**
-**Completed:**
+**Picked up by:** zed-agent
+**Started:** 2026-09-07
+**Completed:** 2026-09-07
 
 > **This task is implemented in the `github.com/nathejk/shared-go` repo, not here.**
 > It is tracked on this board because hq's PRD 012 depends on it. Lift the whole file
@@ -107,16 +107,16 @@ way to break tilmelding is to change the `mobilepay` wire value — don't.
 
 ## Acceptance Criteria
 
-- [ ] `types.PaymentMethod` exists with constants for `mobilepay` and the internal-transfer
+- [x] `types.PaymentMethod` exists with constants for `mobilepay` and the internal-transfer
       value, documented, following the conventions of the neighbouring types
-- [ ] `messages.NathejkPaymentRequested.Method` uses the type; JSON tag and encoded
+- [x] `messages.NathejkPaymentRequested.Method` uses the type; JSON tag and encoded
       representation are unchanged
-- [ ] The existing `"mobilepay"` literal in `tables/payment/commands.go` is replaced by the
+- [x] The existing `"mobilepay"` literal in `tables/payment/commands.go` is replaced by the
       constant, and its wire value is byte-identical to before
-- [ ] A round-trip test proves an event serialised before this change still deserialises
+- [x] A round-trip test proves an event serialised before this change still deserialises
       (i.e. an unknown or legacy method string does not error)
-- [ ] No provider dispatch, no new payments published, no schema change
-- [ ] The chosen wire string for internal transfer recorded in the progress log
+- [x] No provider dispatch, no new payments published, no schema change
+- [x] The chosen wire string for internal transfer recorded in the progress log
 
 ## Progress Log
 
@@ -124,3 +124,40 @@ way to break tilmelding is to change the `mobilepay` wire value — don't.
 
 - 2026-09-07 — Created from hq PRD 012 §8 obstacle 3. Written to be lifted into shared-go.
   Independent of tasks 156 and 158; task 159 depends on this one.
+- 2026-09-07 — Lifted into shared-go and picked up.
+- 2026-09-07 — **Wire string decided: `internal-transfer`** (the proposal, unchanged).
+  Hyphenated rather than `internal_transfer` because the neighbouring wire vocabulary is
+  hyphen/lowercase, and spelled out rather than `transfer` because "transfer" alone reads
+  like a provider transfer, which is the one thing it is not.
+- 2026-09-07 — Added `types.PaymentMethod` to `types/payment.go` with
+  `PaymentMethodNone` (`""`), `PaymentMethodMobilePay` (`"mobilepay"`) and
+  `PaymentMethodInternalTransfer` (`"internal-transfer"`), plus `Valid()` and `String()`.
+  `Valid()` excludes the zero value, matching `types.MemberStatus.Valid()`: an unset method
+  is readable (769 legacy rows, and any event predating the field) but not publishable. The
+  internal-transfer constant documents that it has no provider, must never be handed to
+  one, is not a refund, must reach `reserved`/`received` to count towards any paid-amount,
+  and that its origin should stay nameable (task 158).
+- 2026-09-07 — `messages.NathejkPaymentRequested.Method` is now `types.PaymentMethod`; JSON
+  tag unchanged. `tables/payment/commands.go` stamps `types.PaymentMethodMobilePay`. No
+  provider dispatch was added to `Request`, no payment is published, no schema change —
+  `VARCHAR(99)` already holds both values.
+- 2026-09-07 — Also typed the **read** side: `payment.Payment.Method` is
+  `types.PaymentMethod` instead of `string`, matching `Status types.PaymentStatus` in the
+  same struct, so a reader can compare against the constant without a conversion.
+  `database/sql` scans into it exactly as it already does for `Status`, and the `db`/`json`
+  tags are unchanged. **This is the one source-compatibility note for downstream repos:**
+  code that assigns `p.Method` to a `string` variable now needs `string(p.Method)`. No
+  runtime, wire or schema behaviour changes.
+- 2026-09-07 — Tests: `messages/payment_test.go` asserts the encoded form is a plain
+  `"method":"mobilepay"` and that a requested event decodes and round-trips with a known
+  method, **no** method field (→ `PaymentMethodNone`) and a method this build does not know
+  (→ preserved verbatim, no error — an event that fails to decode is an event that stops
+  being projected). `types/payment_test.go` pins the wire literals and `Valid()`.
+  `tables/payment/commands_test.go`'s `TestRequestAuthorisesAndPublishes` now asserts the
+  stamped method is byte-identical to `"mobilepay"`. Full `go test ./...` green.
+- 2026-09-07 — **Contract for hq:** the internal-transfer wire value is
+  `internal-transfer`; the type is `types.PaymentMethod` with `PaymentMethodMobilePay` /
+  `PaymentMethodInternalTransfer` / `PaymentMethodNone`, and `payment.Payment.Method` is
+  now that type.
+- 2026-09-07 — Completed. Vocabulary exists and is typed; nothing produces an
+  internal-transfer payment yet (task 159).

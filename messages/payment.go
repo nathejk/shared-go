@@ -20,7 +20,7 @@ type NathejkPaymentRequested struct {
 	Amount          int                        `json:"amount"`
 	Currency        string                     `json:"currency"`
 	Timestamp       time.Time                  `json:"timestamp"`
-	Method          string                     `json:"method"`
+	Method          types.PaymentMethod        `json:"method"`
 	OrderLines      []NathejkPayment_OrderLine `json:"orderLines,omitempty"`
 	OrderForeignKey string                     `json:"orderForeignKey,omitempty"`
 	OrderType       string                     `json:"orderType,omitempty"`

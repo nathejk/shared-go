@@ -137,6 +137,12 @@ func TestRequestAuthorisesAndPublishes(t *testing.T) {
 	if body.ReturnUrl != "https://tilmelding.nathejk.dk/klan/t-1" {
 		t.Errorf("event returnUrl = %q", body.ReturnUrl)
 	}
+	// The provider path is MobilePay's alone, and the stamped value must stay
+	// byte-identical to the literal it replaced: it is in every existing row of
+	// the method column and in every requested event on the stream.
+	if body.Method != types.PaymentMethodMobilePay || string(body.Method) != "mobilepay" {
+		t.Errorf("event method = %q, want mobilepay", body.Method)
+	}
 }
 
 func TestRequestPublishesNothingWhenProviderFails(t *testing.T) {

@@ -108,7 +108,7 @@ type Payment struct {
 	ReturnUrl       string              `json:"returnUrl" db:"returnUrl"`
 	Currency        types.Currency      `json:"currency" db:"currency"`
 	Amount          int                 `json:"amount" db:"amount"`
-	Method          string              `json:"method" db:"method"`
+	Method          types.PaymentMethod `json:"method" db:"method"`
 	Status          types.PaymentStatus `json:"status" db:"status"`
 	CreatedAt       string              `json:"createdAt" db:"createdAt"`
 	ChangedAt       string              `json:"changedAt" db:"changedAt"`

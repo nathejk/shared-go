@@ -84,3 +84,98 @@ func (m PaymentMethod) Valid() bool {
 }
 
 func (m PaymentMethod) String() string { return string(m) }
+
+// PaymentSourceUnknown is the Reference of a transfer whose source payment could
+// not be identified: "we looked and could not tell", which is information, as
+// opposed to a zero value, which is not.
+//
+// Safe as a sentinel because it cannot collide with a real reference: references
+// are twelve characters of Crockford base32 (uppercase and digits only), so no
+// lowercase seven-character string is reachable. It is spelled out rather than
+// encoded as a separate boolean so the distinction survives into the column and
+// into any query written against it.
+const PaymentSourceUnknown = "unknown"
+
+// PaymentSource records where the money behind a payment originally came from.
+//
+// It exists because an internal transfer (see PaymentMethodInternalTransfer) does
+// not bring money in — it re-attributes money a provider payment already brought
+// in. Without this, a transferred payment's audit trail dead-ends: you can see
+// that an order was covered by a transfer and nothing more, so "who paid for
+// this?" becomes unanswerable for exactly the records somebody is most likely to
+// ask about.
+//
+// Three states, and they must stay distinguishable:
+//
+//   - **Not a transfer.** No source at all (a nil *PaymentSource on the event, an
+//     empty column). A provider payment has no provenance because it *is* the
+//     provenance.
+//   - **Known.** Reference names the root provider payment.
+//   - **Unknown.** Reference is PaymentSourceUnknown. Identifying the source often
+//     fails and that is the normal case, not an edge case: payment.orderForeignKey
+//     is polymorphic and most historical payments are not reachable from an order
+//     at all. An unresolvable source must never prevent a transfer from being
+//     recorded, so this state is a first-class outcome rather than an error.
+//
+// Reference is the **root**, not one hop back. Money can move more than once
+// (A → B → C), and a transfer whose own source was a transfer inherits the
+// original provider payment's reference rather than naming its predecessor —
+// otherwise provenance degrades with every move and answering a simple question
+// means walking an unbounded chain backwards. Via records the immediate
+// predecessor as well, which is additional information; losing the root is not an
+// option.
+//
+// It is deliberately not a foreign key with referential intent. The root may be
+// from a previous season or from the 769 legacy rows, and nothing should refuse to
+// record a transfer because a lookup failed. It is a reference for humans and
+// reports.
+//
+// The remaining fields are a snapshot taken when the transfer is created, so a
+// display does not have to re-resolve a chain that may cross seasons. There is no
+// owner *name*: names live in the team read models, which are not this package's
+// to read and which a caller can join for a current one, while the id is the part
+// that stays true. For many legacy payments the owner is the only thing knowable
+// at all, which is why it is recorded next to the reference rather than derived
+// from it.
+type PaymentSource struct {
+	// Reference is the root provider payment, or PaymentSourceUnknown.
+	Reference string `json:"reference"`
+
+	// Via is the immediate predecessor when the money has moved more than once,
+	// empty when this transfer takes it straight from the root.
+	Via string `json:"via,omitempty"`
+
+	OwnerType TeamType      `json:"ownerType,omitempty"`
+	OwnerID   string        `json:"ownerId,omitempty"`
+	Method    PaymentMethod `json:"method,omitempty"`
+
+	// PaidAt is when the root payment was recorded, as the projection stores its
+	// timestamps (a string), so provenance can be read without a second lookup.
+	PaidAt string `json:"paidAt,omitempty"`
+}
+
+// UnknownPaymentSource is the provenance of a transfer whose source could not be
+// identified. Non-nil on purpose: "this is a transfer, and we could not tell where
+// the money came from" is a different fact from "this is not a transfer".
+func UnknownPaymentSource() *PaymentSource {
+	return &PaymentSource{Reference: PaymentSourceUnknown}
+}
+
+// Known reports whether the source payment was actually identified.
+func (s PaymentSource) Known() bool {
+	return s.Reference != "" && s.Reference != PaymentSourceUnknown
+}
+
+// RootReference is the value to record in an indexed column and to query on: the
+// root payment's reference, or PaymentSourceUnknown when it could not be
+// identified.
+//
+// Normalising here means a producer that leaves Reference empty still ends up
+// stored as explicitly unknown rather than as "not a transfer", so the three
+// states cannot collapse into two by omission.
+func (s PaymentSource) RootReference() string {
+	if s.Reference == "" {
+		return PaymentSourceUnknown
+	}
+	return s.Reference
+}

@@ -16,6 +16,7 @@ github.com/jrgensen/cqrs v0.1.0 h1:c1+jZ/1pL6ZQzP/S55RUM0qCbrRs843wutFtcNmvrjA=
 github.com/jrgensen/cqrs v0.1.0/go.mod h1:iEhgVzTdXjGkD3u0EIt4kD+/Y+SzBfhPaCumwJA1Y1Q=
 github.com/jrgensen/stream v0.1.1 h1:jftyHFZAkaOh0EBIOeQCd2nUsEOPNtd5qiJkJjwo08k=
 github.com/jrgensen/stream v0.1.1/go.mod h1:JxYchHK7RMIrdNM7E2VT1ZCcUccAz22ec+s/LyZ1yFw=
+github.com/kisielk/sqlstruct v0.0.0-20201105191214-5f3e10d3ab46/go.mod h1:yyMNCyc/Ib3bDTKd379tNMpB/7/H5TjM2Y9QJ5THLbE=
 github.com/lib/pq v1.10.1 h1:6VXZrLU0jHBYyAqrSPa+MgPfnSvTPuMgK+k0o5kVFWo=
 github.com/lib/pq v1.10.1/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/matoous/go-nanoid/v2 v2.1.0 h1:P64+dmq21hhWdtvZfEAofnvJULaRR1Yib0+PnU669bE=

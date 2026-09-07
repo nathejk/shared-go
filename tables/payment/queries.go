@@ -63,6 +63,7 @@ var paymentColumns = []any{
 	goqu.I("p.currency"), goqu.I("p.amount"), goqu.I("p.method"), goqu.I("p.status"),
 	goqu.I("p.createdAt"), goqu.I("p.changedAt"), goqu.I("p.orderForeignKey"),
 	goqu.I("p.orderType"), goqu.I("p.operations"),
+	goqu.I("p.sourceReference"), goqu.I("p.source"),
 }
 
 // narrow applies a Filter to a dataset. Shared by GetAll and AmountPaid so the

@@ -88,6 +88,52 @@ func (o OperationList) Value() (driver.Value, error) {
 	return string(b), nil
 }
 
+// SourceRecord is a payment's provenance as stored in the source JSON column: the
+// snapshot published on the requested event, kept verbatim so a display never has
+// to re-resolve a chain that may cross seasons.
+//
+// A value rather than a pointer because goqu scans into struct fields. The three
+// states of types.PaymentSource survive intact all the same: an empty Reference
+// means "not a transfer" (the column's '{}' default, and every row that predates
+// the column), types.PaymentSourceUnknown means "is a transfer, source could not be
+// identified", and anything else names the root.
+//
+// It duplicates sourceReference deliberately. The column is what a query joins and
+// indexes; this is the full record — the same split as status alongside operations
+// in this table.
+type SourceRecord struct {
+	types.PaymentSource
+}
+
+func (s *SourceRecord) Scan(value any) error {
+	if value == nil {
+		*s = SourceRecord{}
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("SourceRecord.Scan: unsupported type %T", value)
+	}
+	if len(bytes) == 0 {
+		*s = SourceRecord{}
+		return nil
+	}
+	return json.Unmarshal(bytes, &s.PaymentSource)
+}
+
+func (s SourceRecord) Value() (driver.Value, error) {
+	b, err := json.Marshal(s.PaymentSource)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
 // Payment is a payment as projected from the stream.
 //
 // Amount is in the currency's minor unit (øre for DKK), matching the events,
@@ -115,6 +161,17 @@ type Payment struct {
 	OrderForeignKey string              `json:"orderForeignKey" db:"orderForeignKey"`
 	OrderType       string              `json:"orderType" db:"orderType"`
 	Operations      OperationList       `json:"operations" db:"operations"`
+
+	// SourceReference is the root provider payment whose money an internal
+	// transfer moves: empty for a payment that is not a transfer, "unknown" for a
+	// transfer whose source could not be identified. Indexed, because "every
+	// transfer funded by payment X" is a lookup.
+	SourceReference string `json:"sourceReference" db:"sourceReference"`
+
+	// Source is the full provenance snapshot — root, immediate predecessor, the
+	// original payer's owner id and type, method and time — as resolved when the
+	// transfer was created.
+	Source SourceRecord `json:"source" db:"source"`
 }
 
 // table is the entity: read API, write API and projector.
@@ -145,6 +202,23 @@ func New(p cqrs.Publisher, w cqrs.Writer, r cqrs.Reader, year types.YearSlug, es
 	if err := w.Consume(addOperationsColumn); err != nil {
 		log.Fatalf("Error migrating table %q", err)
 	}
+	// Provenance. Guarded migrations rather than table.sql alone: CREATE TABLE IF
+	// NOT EXISTS is a no-op wherever a payment table already exists, so a column
+	// declared only in the schema file would be missing from every existing
+	// database and every projection statement would be dead-lettered on an unknown
+	// column.
+	if err := cqrs.EnsureColumn(r, w, "payment", "sourceReference",
+		"sourceReference VARCHAR(99) NOT NULL DEFAULT '' AFTER operations"); err != nil {
+		log.Fatalf("Error migrating payment.sourceReference %q", err)
+	}
+	if err := cqrs.EnsureColumn(r, w, "payment", "source",
+		"source JSON NOT NULL DEFAULT ('{}') AFTER sourceReference"); err != nil {
+		log.Fatalf("Error migrating payment.source %q", err)
+	}
+	if err := cqrs.EnsureIndex(r, w, "payment", "idx_payment_source",
+		"ALTER TABLE payment ADD INDEX idx_payment_source (sourceReference)"); err != nil {
+		log.Fatalf("Error migrating payment.idx_payment_source %q", err)
+	}
 	return table
 }
 
@@ -171,7 +245,8 @@ func (t *table) CreateTableSql() string {
 // the same *table into the read models, the command bus and the consumer mux —
 // and why there is no separate command constructor to get out of step with it.
 var (
-	_ Queries       = (*table)(nil)
-	_ Commands      = (*table)(nil)
-	_ cqrs.Consumer = (*table)(nil)
+	_ Queries        = (*table)(nil)
+	_ Commands       = (*table)(nil)
+	_ SourceResolver = (*table)(nil)
+	_ cqrs.Consumer  = (*table)(nil)
 )

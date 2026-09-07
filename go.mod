@@ -3,6 +3,7 @@ module github.com/nathejk/shared-go
 go 1.25.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/doug-martin/goqu/v9 v9.19.0
 	github.com/google/uuid v1.6.0
 	github.com/jrgensen/cqrs v0.1.0

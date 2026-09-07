@@ -1,6 +1,7 @@
 package payment
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -53,12 +54,16 @@ func (c *consumer) HandleMessage(msg cqrs.Message) error {
 		// commands publish and what hq's year filter means. Both copies used
 		// the publication timestamp, which is the same value right up until a
 		// season is opened in the preceding calendar year.
+		//
+		// sourceReference / source are empty for everything but an internal
+		// transfer; see provenance below for why the two columns exist.
+		sourceRef, source := provenance(body.Source)
 		return c.w.Consume(fmt.Sprintf(
-			"INSERT INTO payment SET reference=%q, receiptEmail=%q, returnUrl=%q, year=%q, currency=%q, amount=%d, method=%q, createdAt=%q, changedAt=%q, status=%q, orderForeignKey=%q, orderType=%q, "+
+			"INSERT INTO payment SET reference=%q, receiptEmail=%q, returnUrl=%q, year=%q, currency=%q, amount=%d, method=%q, createdAt=%q, changedAt=%q, status=%q, orderForeignKey=%q, orderType=%q, sourceReference=%q, source=%q, "+
 				"operations=JSON_ARRAY(JSON_OBJECT('type',%q,'amount',%d,'time',%q)) "+
-				"ON DUPLICATE KEY UPDATE receiptEmail=VALUES(receiptEmail), returnUrl=VALUES(returnUrl), year=VALUES(year), currency=VALUES(currency), amount=VALUES(amount), method=VALUES(method), status=VALUES(status), orderForeignKey=VALUES(orderForeignKey), orderType=VALUES(orderType), operations=VALUES(operations)",
+				"ON DUPLICATE KEY UPDATE receiptEmail=VALUES(receiptEmail), returnUrl=VALUES(returnUrl), year=VALUES(year), currency=VALUES(currency), amount=VALUES(amount), method=VALUES(method), status=VALUES(status), orderForeignKey=VALUES(orderForeignKey), orderType=VALUES(orderType), sourceReference=VALUES(sourceReference), source=VALUES(source), operations=VALUES(operations)",
 			body.Reference, body.ReceiptEmail, body.ReturnUrl, msg.Subject().Parts()[1], body.Currency, body.Amount, body.Method,
-			msg.Time(), msg.Time(), types.PaymentStatusRequested, body.OrderForeignKey, body.OrderType,
+			msg.Time(), msg.Time(), types.PaymentStatusRequested, body.OrderForeignKey, body.OrderType, sourceRef, source,
 			types.PaymentStatusRequested, body.Amount, msg.Time(),
 		))
 
@@ -80,6 +85,31 @@ func (c *consumer) HandleMessage(msg cqrs.Message) error {
 		log.Printf("Unhandled message %q", msg.Subject().Subject())
 	}
 	return nil
+}
+
+// provenance renders a payment's source for the two columns that record it: the
+// indexed root reference, and the full snapshot as JSON.
+//
+// A nil source — which is what every event published before the field existed
+// decodes to, and what every provider payment carries — yields the not-a-transfer
+// pair (” and '{}'), so no existing row changes meaning. A non-nil source always
+// yields a non-empty reference: RootReference normalises a source whose reference
+// was left empty to types.PaymentSourceUnknown, so "is a transfer, source could not
+// be identified" cannot decay into "not a transfer" through a producer's omission.
+//
+// Marshalling failure falls back to the not-a-transfer pair rather than failing the
+// statement: losing the snapshot for one payment is bad, dead-lettering the payment
+// itself is worse, and sourceReference still carries the part that gets queried.
+func provenance(s *types.PaymentSource) (reference, record string) {
+	if s == nil {
+		return "", "{}"
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		log.Printf("payment: encoding provenance for source %q: %v", s.Reference, err)
+		return s.RootReference(), "{}"
+	}
+	return s.RootReference(), string(b)
 }
 
 // transition builds the UPDATE for a state change: set the current status and

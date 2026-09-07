@@ -69,3 +69,90 @@ func TestPaymentRequestedDecodesAnyMethod(t *testing.T) {
 		})
 	}
 }
+
+// Provenance must be invisible unless it applies.
+//
+// A provider payment is its own provenance, so the field must be absent from its
+// JSON rather than present and empty: an empty object would read as "this is a
+// transfer whose source is nothing", which is a third meaning nobody wants.
+func TestPaymentRequestedOmitsProvenanceForAProviderPayment(t *testing.T) {
+	b, err := json.Marshal(messages.NathejkPaymentRequested{
+		Reference: "AAAAAAAAAAAA",
+		Method:    types.PaymentMethodMobilePay,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "source") {
+		t.Errorf("a provider payment must carry no source, got %s", b)
+	}
+}
+
+// The three states of provenance, asserted through the wire.
+//
+// Absent is the one that matters most: every payment.requested event ever
+// published lacks this field, they are all replayed on every start, and they must
+// all keep meaning "not a transfer" — which is why nil is that state and unknown is
+// a value rather than a zero.
+func TestPaymentRequestedProvenanceStates(t *testing.T) {
+	t.Run("absent means not a transfer", func(t *testing.T) {
+		var body messages.NathejkPaymentRequested
+		if err := json.Unmarshal([]byte(`{"reference":"a","method":"mobilepay"}`), &body); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if body.Source != nil {
+			t.Errorf("Source = %+v, want nil", body.Source)
+		}
+	})
+
+	t.Run("unknown is a value, not a zero", func(t *testing.T) {
+		body := messages.NathejkPaymentRequested{
+			Reference: "c",
+			Method:    types.PaymentMethodInternalTransfer,
+			Source:    types.UnknownPaymentSource(),
+		}
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var again messages.NathejkPaymentRequested
+		if err := json.Unmarshal(b, &again); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if again.Source == nil {
+			t.Fatal("unknown must survive as a transfer with no identified source")
+		}
+		if again.Source.Known() {
+			t.Error("unknown must not report as known")
+		}
+		if again.Source.Reference != types.PaymentSourceUnknown {
+			t.Errorf("reference = %q, want %q", again.Source.Reference, types.PaymentSourceUnknown)
+		}
+	})
+
+	t.Run("known round-trips whole", func(t *testing.T) {
+		want := types.PaymentSource{
+			Reference: "AAAAAAAAAAAA",
+			Via:       "BBBBBBBBBBBB",
+			OwnerType: types.TeamTypePatrulje,
+			OwnerID:   "team-1",
+			Method:    types.PaymentMethodMobilePay,
+			PaidAt:    "2026-06-04T12:00:00Z",
+		}
+		b, err := json.Marshal(messages.NathejkPaymentRequested{
+			Reference: "c",
+			Method:    types.PaymentMethodInternalTransfer,
+			Source:    &want,
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var again messages.NathejkPaymentRequested
+		if err := json.Unmarshal(b, &again); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if again.Source == nil || *again.Source != want {
+			t.Errorf("Source = %+v, want %+v", again.Source, want)
+		}
+	})
+}

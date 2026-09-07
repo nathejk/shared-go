@@ -1,11 +1,11 @@
 # 158 — [shared-go] Payment provenance: where transferred money originally came from
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Created:** 2026-09-07
-**Picked up by:**
-**Started:**
-**Completed:**
+**Picked up by:** zed-agent
+**Started:** 2026-09-07
+**Completed:** 2026-09-07
 
 > **This task is implemented in the `github.com/nathejk/shared-go` repo, not here.**
 > It is tracked on this board because hq's PRD 012 depends on it. Lift the whole file
@@ -141,19 +141,19 @@ purpose — don't.
 
 ## Acceptance Criteria
 
-- [ ] A payment can carry the reference of the payment whose money it moves, set at
+- [x] A payment can carry the reference of the payment whose money it moves, set at
       creation time and carried in the event payload
-- [ ] Provenance resolves to the **root** provider payment across at least two hops
+- [x] Provenance resolves to the **root** provider payment across at least two hops
       (A → B → C still names A), proven by a test
-- [ ] "Unknown source" is representable and distinguishable from "not a transfer", and does
+- [x] "Unknown source" is representable and distinguishable from "not a transfer", and does
       not prevent a payment being created
-- [ ] Events published before this change still deserialise unchanged
-- [ ] If a column was added, it is created through `cqrs.EnsureColumn` (or equivalent
+- [x] Events published before this change still deserialise unchanged
+- [x] If a column was added, it is created through `cqrs.EnsureColumn` (or equivalent
       guarded migration) and verified to appear in a pre-existing database, not only a
       freshly created one
-- [ ] A full replay of the event log reproduces identical provenance (nothing derived from
+- [x] A full replay of the event log reproduces identical provenance (nothing derived from
       current read-model state)
-- [ ] Field names, column name, and the unknown representation recorded in the progress log
+- [x] Field names, column name, and the unknown representation recorded in the progress log
 
 ## Progress Log
 
@@ -161,3 +161,71 @@ purpose — don't.
 
 - 2026-09-07 — Created from hq PRD 012 §8 (Provenance) and §11 Q4. Written to be lifted
   into shared-go. Independent of tasks 156 and 157; task 159 depends on this one.
+- 2026-09-07 — Lifted into shared-go and picked up.
+- 2026-09-07 — **Decision: both homes, as the task's own "not exclusive" note suggests.**
+  An indexed column for the root reference (the lookup) plus a JSON column for the full
+  snapshot (the record). Not `operations`: its entries have a fixed `{type,amount,time}`
+  shape that `OperationList` unmarshals, and a differently-shaped entry there would be a
+  poor citizen of a trail whose whole point is one entry per transition. The redundancy
+  between the two new columns is the same split this table already uses for `status`
+  alongside `operations` — current-state summary next to the full record.
+- 2026-09-07 — **Contract for hq — field, column and unknown names:**
+  - Event field: `messages.NathejkPaymentRequested.Source *types.PaymentSource`,
+    `json:"source,omitempty"`. Its JSON keys are `reference`, `via`, `ownerType`,
+    `ownerId`, `method`, `paidAt` (all but `reference` are `omitempty`).
+  - Columns: `payment.sourceReference VARCHAR(99) NOT NULL DEFAULT ''` (indexed as
+    `idx_payment_source`) and `payment.source JSON NOT NULL DEFAULT ('{}')`.
+  - Read model: `payment.Payment.SourceReference string` and
+    `payment.Payment.Source payment.SourceRecord` (embeds `types.PaymentSource`, with
+    `Scan`/`Value` for the JSON column).
+  - **Three states, all distinguishable.** Not a transfer: `Source == nil` on the event,
+    `sourceReference = ''` and `source = '{}'` in the row. Known: the root's reference.
+    Unknown: the exact string **`unknown`** (`types.PaymentSourceUnknown`), in both the
+    field and the column. Safe as a sentinel because references are twelve characters of
+    Crockford base32 (uppercase + digits), so no lowercase seven-character string is
+    reachable. `types.PaymentSource.Known()` is the check to use.
+  - `operations` is **not** used for the chain; `via` carries the immediate predecessor.
+- 2026-09-07 — Resolution lives in `tables/payment/provenance.go`:
+  `SourceOf(ctx, reference) *types.PaymentSource`, exposed through a new narrow
+  `payment.SourceResolver` interface rather than being added to `Queries` — adding a method
+  to `Queries` would break every fake implementing it in another repo, and a transfer's
+  creator needs nothing else from the read side. `*table` satisfies it, so the composition
+  root wires the same value.
+
+  It never returns nil and never returns an error: an unresolvable source is
+  `types.UnknownPaymentSource()`. That is deliberate, per the task — refusing to record a
+  transfer because a lookup came back empty would be the wrong trade every time.
+
+  **Root, not one hop:** because every transfer stores the *root* rather than its
+  predecessor, resolution costs exactly one extra read and A → B → C → … still names A,
+  with the immediate predecessor in `via`. Inconsistent data therefore cannot send it into
+  an unbounded walk. The owner is recovered from whichever linkage the row actually uses —
+  through `orders` for current payments, and straight off the polymorphic
+  `orderForeignKey`/`orderType` pair for legacy ones, where the foreign key *is* the team
+  id. That second branch is what makes provenance worth anything for the 151-of-189 case
+  in the task description.
+- 2026-09-07 — Deliberately **no owner name** on `PaymentSource`, only `ownerType` +
+  `ownerId`. Names live in the team read models, which are not this package's to read and
+  which hq can join for a *current* name; the id is the part that stays true. hq composes
+  "betalt af Patrulje 12 (MobilePay, 4. juni)" from `ownerId` + `method` + `paidAt`.
+- 2026-09-07 — Replay-stability: provenance is resolved once, by the transfer's creator,
+  and carried in the event payload; the projector only copies it. Nothing is derived from
+  read-model state at projection time, so a rebuild years later reproduces the same
+  provenance. The `requested` branch is the only one that writes it, matching the fact that
+  `reserved`/`received` are UPDATEs keyed on reference.
+- 2026-09-07 — Migration: `sourceReference`, `source` and `idx_payment_source` are added
+  through `cqrs.EnsureColumn` / `cqrs.EnsureIndex` in `payment.New`, **and** declared in
+  `table.sql` for fresh databases. Verified with `sqlmock` (added as a test dependency; it
+  was already in the module cache) that a **pre-existing** payment table — where
+  `CREATE TABLE IF NOT EXISTS` changes nothing — still gets all three, and that nothing is
+  altered when the existence checks report them present.
+- 2026-09-07 — Tests: `tables/payment/provenance_test.go` (root across two hops and across
+  a longer chain, with the lookup count asserting one extra read; the three unknown paths;
+  an unprojected root keeping its reference; legacy owner recovery; the generated SQL),
+  `tables/payment/consumer_test.go` (both columns written, upsert refreshes them, unknown
+  written explicitly, an omitted reference normalised to unknown, transitions never touch
+  provenance), `tables/payment/migration_test.go`, and `messages/payment_test.go` (absent
+  source decodes to nil, unknown survives as a value, a known source round-trips whole, a
+  provider payment emits no `source` key at all). `go test ./...`, `go vet ./...` and
+  `gofmt -l .` all clean.
+- 2026-09-07 — Completed. Nothing produces a transfer payment yet; task 159 is the caller.

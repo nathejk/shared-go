@@ -368,10 +368,111 @@ func TestTransferResolvesProvenanceFromTheFundingOrder(t *testing.T) {
 	}
 }
 
-// A transfer of nothing but zero-priced lines has no meaningful payment, and the
-// saga only settles orders that owe something — so both halves would sit open, and
-// therefore mutable, forever. They must be settled the way Commands.Settle settles
-// a free order.
+// The regression this exists to prevent: a transfer must close its own orders.
+//
+// Leaving it to the payment saga made a transfer depend on another consumer's
+// projection being current. The saga is a one-shot reaction to payment.received
+// that reads its own projections, and this command publishes in a burst — the
+// credit order's payment lands milliseconds after the order was created, so the
+// saga would evaluate an order its projector had not written yet, retry for a
+// couple of seconds, and abandon it permanently, because nothing ever publishes
+// another payment.received for that order. The credit half lost that race
+// structurally, being published first: in dev, two of three transfers left the
+// sending team's credit order showing open with nothing owed.
+//
+// So: no cross-consumer dependency at all. Both halves are closed by the command
+// that knows they are covered.
+func TestTransferClosesBothOfItsOwnOrders(t *testing.T) {
+	c, pub, _ := newTestCommander(seat("o-1"), shirt("o-1"))
+
+	res, err := c.TransferMember(context.Background(), request())
+	if err != nil {
+		t.Fatalf("TransferMember: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		orderID string
+		want    int
+	}{
+		{"credit", res.CreditOrderID, -57000},
+		{"charge", res.ChargeOrderID, 57000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paidAt := -1
+			receivedAt := -1
+			for i, subj := range pub.Subjects() {
+				switch {
+				case subj == "NATHEJK.2026.order."+tc.orderID+".paid":
+					paidAt = i
+				case strings.HasPrefix(subj, "NATHEJK.2026.payment.") && strings.HasSuffix(subj, ".received"):
+					var body messages.NathejkPaymentReceived
+					if err := pub.Messages[i].Body(&body); err != nil {
+						t.Fatalf("decode: %v", err)
+					}
+					if body.Amount == tc.want {
+						receivedAt = i
+					}
+				}
+			}
+			if paidAt < 0 {
+				t.Fatalf("order %s was left for the saga to close: %v", tc.orderID, pub.Subjects())
+			}
+			// The money trail precedes the state change, so a reader of the log
+			// never sees an order closed before it was covered.
+			if receivedAt < 0 || receivedAt > paidAt {
+				t.Errorf("the payment must be published before the order is closed, got received=%d paid=%d", receivedAt, paidAt)
+			}
+			var paid messages.NathejkOrderPaid
+			if err := pub.Messages[paidAt].Body(&paid); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if paid.OrderID != tc.orderID {
+				t.Errorf("paid names %q, want %q", paid.OrderID, tc.orderID)
+			}
+			// The order's own signed total, exactly as the saga would have said it.
+			if paid.PaidAmount != tc.want {
+				t.Errorf("paidAmount = %d, want the order's own total %d", paid.PaidAmount, tc.want)
+			}
+		})
+	}
+}
+
+// Closing its own orders must not make the reassignment stop being last, nor make
+// the credit half stop preceding the charge half.
+func TestTransferKeepsItsPublishOrder(t *testing.T) {
+	c, pub, _ := newTestCommander(seat("o-1"))
+	res, err := c.TransferMember(context.Background(), request())
+	if err != nil {
+		t.Fatalf("TransferMember: %v", err)
+	}
+	subjects := pub.Subjects()
+	want := []string{
+		"NATHEJK.2026.order." + res.CreditOrderID + ".created",
+		"NATHEJK.2026.order." + res.CreditOrderID + ".lines.changed",
+		"NATHEJK.2026.payment." + res.CreditReference + ".requested",
+		"NATHEJK.2026.payment." + res.CreditReference + ".received",
+		"NATHEJK.2026.order." + res.CreditOrderID + ".paid",
+		"NATHEJK.2026.order." + res.ChargeOrderID + ".created",
+		"NATHEJK.2026.order." + res.ChargeOrderID + ".lines.changed",
+		"NATHEJK.2026.payment." + res.ChargeReference + ".requested",
+		"NATHEJK.2026.payment." + res.ChargeReference + ".received",
+		"NATHEJK.2026.order." + res.ChargeOrderID + ".paid",
+		"NATHEJK.2026.spejder.m-1.reassigned",
+	}
+	if len(subjects) != len(want) {
+		t.Fatalf("published %d events, want %d:\n%v", len(subjects), len(want), subjects)
+	}
+	for i := range want {
+		if subjects[i] != want[i] {
+			t.Errorf("event %d = %q, want %q", i, subjects[i], want[i])
+		}
+	}
+}
+
+// A transfer of nothing but zero-priced lines has no meaningful payment: there is
+// no money to record. It is still closed the same way — this case was the precedent
+// the change above generalised, not an exception to it.
 func TestTransferSettlesZeroValueHalvesWithoutAPayment(t *testing.T) {
 	free := seat("o-1")
 	free.UnitPrice = 0

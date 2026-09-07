@@ -22,6 +22,8 @@ money paid for them along with them:
   destination, at the price snapshotted on the original line;
 - both sides are covered by **internal-transfer** payments carrying provenance, so
   the original MobilePay payment that brought the money in is still nameable;
+- both orders are closed by the command itself, so a transfer completes without
+  depending on another consumer's timing;
 - the pair nets to zero. Always. That is the invariant the whole thing rests on.
 
 It is a pre-race reassignment, which is a different fact from the race-time
@@ -59,9 +61,9 @@ Nothing new goes on the consumer mux: the command only publishes. The projection
 that consume what it publishes — `order`, `payment`, `spejder` — must all be
 mounted, which they already are.
 
-**The payment saga must be mounted somewhere** (it is, in `tilmelding`, and
-deliberately in exactly one service) or both halves of every transfer will sit
-`open` forever. Do not add a second mount to fix that; see §6.
+A transfer does **not** need the payment saga: it closes its own two orders (§6).
+The saga must still be mounted in exactly one service — it is, in `tilmelding` —
+for ordinary MobilePay payments. Do not add a second mount.
 
 ---
 
@@ -155,10 +157,12 @@ NATHEJK.{year}.order.{creditOrderId}.created
 NATHEJK.{year}.order.{creditOrderId}.lines.changed        (negated lines)
 NATHEJK.{year}.payment.{creditReference}.requested        (negative amount)
 NATHEJK.{year}.payment.{creditReference}.received         (negative amount)
+NATHEJK.{year}.order.{creditOrderId}.paid                 (negative paidAmount)
 NATHEJK.{year}.order.{chargeOrderId}.created
 NATHEJK.{year}.order.{chargeOrderId}.lines.changed        (positive lines)
 NATHEJK.{year}.payment.{chargeReference}.requested        (positive amount)
 NATHEJK.{year}.payment.{chargeReference}.received         (positive amount)
+NATHEJK.{year}.order.{chargeOrderId}.paid                 (positive paidAmount)
 NATHEJK.{year}.spejder.{memberId}.reassigned              (last)
 ```
 
@@ -178,21 +182,42 @@ report the failure rather than retrying blindly — although a retry is safe (§
 
 ### How the two orders reach a terminal state
 
-Through the **payment saga**, the same path as any other order. The credit order's
-total is negative and its payment is negative, so `paidAmount == totalAmount` on
-both halves and both settle. The saga was taught to settle a negative total for
-exactly this (task 156); before that, a credit order could never leave `open` and
-would have stayed mutable forever.
+**The command closes them itself**, in the same burst — see the two `order.paid`
+events above. A transfer therefore does not depend on any other consumer, or any
+other service, being alive or current.
 
-One exception handled inside the command: a transfer whose lines are all
-zero-priced has no meaningful payment, and the saga only settles orders that owe
-something, so those two halves get `order.paid` with `paidAmount: 0` published
-directly — the same event `order.Commands.Settle` publishes, minus its read-back
-race against a projection that has not yet seen the order created moments earlier.
+This was not the first design, and the history is worth knowing because it explains
+the shape. Settlement was originally left to the **payment saga**, which reacts to
+`payment.received` and reads its own projections. But this command publishes in a
+burst: the credit order's payment lands milliseconds after the order was created,
+before the order projector has necessarily written it. The saga would then evaluate
+an order it could not see, retry for about two seconds, and give up **permanently**
+— nothing ever publishes another `payment.received` for that order. The credit half
+lost that race structurally, being published first with the least head start. In
+dev, two of three transfers left the sending team's credit order showing *Åben*
+with *Mangler 0,00 kr.*, recoverable only by restarting the service so the stream
+replayed.
 
-Consequence for the caller: **both orders appear as `PAID`**, and the credit order
-has a negative total. Any UI that sums or renders order totals should expect a
-negative one. `order.Status` on the wire is unchanged (`"OPEN"` / `"PAID"`).
+The command already knows both orders are covered — it created the orders *and* the
+payments. Rediscovering that asynchronously through another consumer's lag was the
+flaw; widening the retry budget would only have hidden it, since the window has no
+upper bound.
+
+This is not "a caller may assert paid". It is the same freedom
+`order.Commands.Settle` has, for the same reason: the order owes nothing, and here
+that is *known* rather than believed. The saga remains the only path for an order
+whose money arrives from outside, and it stays idempotent — an already-paid order
+is an early return there, and the projector's `handlePaid` guards on
+`status='open'`.
+
+Consequences for the caller:
+
+- **Both orders appear as `PAID`** essentially immediately, subject only to
+  ordinary projection lag. Any UI that sums or renders order totals should expect
+  the credit order's negative total. `order.Status` on the wire is unchanged
+  (`"OPEN"` / `"PAID"`).
+- A transfer's settlement no longer requires the saga's host service to be running.
+  The saga must still be mounted for *ordinary* MobilePay payments.
 
 ---
 
@@ -365,7 +390,8 @@ them.
 ## 12. Checklist
 
 - [ ] `transfer.New(...)` wired in the composition root
-- [ ] the payment saga is mounted in exactly one service (still `tilmelding`)
+- [ ] the payment saga is mounted in exactly one service (still `tilmelding`) — for
+      ordinary payments; a transfer no longer depends on it
 - [ ] endpoint enforces its own preconditions: accepted, not started, under the cap
 - [ ] **no** minimum-member check on the origin
 - [ ] each error mapped to its own message; `ErrSameTeam` distinct from

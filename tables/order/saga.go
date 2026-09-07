@@ -44,14 +44,23 @@ const DefaultSagaAttempts = 5
 // reject mutations with ErrNotOpen, giving the immutability guarantee
 // users asked for.
 //
-// This is the only path by which an order that *owes money* reaches StatusPaid,
-// in either direction: a charge whose payments have arrived, and a credit whose
-// matching negative payment has been recorded (see covered). An order that owes
-// nothing — one recording a free size change, say — will never see a payment, so
-// Commands.Settle publishes the same event with a paid amount of zero. The two
+// This is the path by which an order reaches StatusPaid on money arriving *from
+// outside*, in either direction: a charge whose payments have arrived, and a credit
+// whose matching negative payment has been recorded (see covered). An order that
+// owes nothing — one recording a free size change, say — will never see a payment,
+// so Commands.Settle publishes the same event with a paid amount of zero. The two
 // cannot be confused: Settle refuses a non-zero total, and the TotalAmount == 0
-// guard in attemptTransition keeps the saga from settling a free order on the
-// back of some unrelated payment.
+// guard in attemptTransition keeps the saga from settling a free order on the back
+// of some unrelated payment.
+//
+// It is not the only publisher of NathejkOrderPaid, and deliberately so. An
+// operation that creates an order *and* the payment covering it in one go already
+// knows the order is settled, and the tables/transfer command closes its own two
+// orders for exactly that reason: waiting for this saga to rediscover the fact
+// through its own projection lag left credit orders permanently open. So an order
+// being already paid when the saga arrives is a normal outcome here, not a sign of
+// a double publish — see the early return in attemptTransition, and handlePaid's
+// WHERE status='open' guard behind it.
 //
 // The saga is idempotent at multiple layers:
 //
@@ -155,6 +164,17 @@ func (s *saga) forOurSeason(subj cqrs.Subject) bool {
 	return strings.EqualFold(parts[1], string(s.year))
 }
 
+// attempt is what one pass over the payment and its order found: the outcome, and
+// the order it concerned when there was one.
+//
+// The order id is carried so that giving up can name what was abandoned. Without
+// it a log line can only name the payment, and "which order is stuck?" then costs
+// a manual join.
+type attempt struct {
+	result  attemptResult
+	orderID string
+}
+
 // attemptResult is what one pass over the payment and its order found, and
 // therefore whether reading again can change the answer.
 type attemptResult int
@@ -201,31 +221,49 @@ func (s *saga) HandleMessage(msg cqrs.Message) error {
 		attempts = 1
 	}
 	wait := s.settle / time.Duration(attempts)
-	last := resultSettled
+	last := attempt{result: resultSettled}
 	for i := 0; i < attempts; i++ {
-		if i > 0 && s.waitBeforeRetry(last) {
+		if i > 0 && s.waitBeforeRetry(last.result) {
 			s.nap(wait)
 		}
 		res, err := s.attemptTransition(body.Reference)
 		if err != nil {
 			return err
 		}
-		if res == resultSettled {
+		if res.result == resultSettled {
 			return nil
 		}
 		last = res
 	}
-	// Budget exhausted.
-	if last == resultUnprojected {
-		// Worth saying out loud: unlike an under-paid order, this one is
-		// expected to be payable and we simply never saw it. It resolves on a
-		// later replay, since the events are on the stream permanently, but
-		// until then the order shows as open despite being paid.
-		log.Printf("order saga: payment %s: order still not projected after %d attempts; will settle on a later replay", body.Reference, attempts)
+
+	// Budget exhausted, and this is the end of the line: nothing will publish
+	// another payment.received for this order, so the decision is not deferred but
+	// abandoned until the stream is replayed. Both exhaustion branches say so.
+	//
+	// Both, because saying it for only one of them is what made a real incident
+	// expensive to find: a transfer's credit order sat open with nothing owed, and
+	// the branch that fired was the *under-paid* one — which logged nothing at all.
+	// A give-up with no log line is indistinguishable from an order that was
+	// correctly left alone.
+	switch last.result {
+	case resultUnprojected:
+		log.Printf("order saga: giving up on payment %s: order %s still not projected after %d attempts; it will settle when the stream is replayed",
+			body.Reference, orderName(last.orderID), attempts)
+	case resultUnderpaid:
+		log.Printf("order saga: giving up on payment %s: order %s still looks under-paid after %d attempts; if it is in fact covered this is projection lag and it will settle when the stream is replayed",
+			body.Reference, orderName(last.orderID), attempts)
 	}
 	// Either projection lagged beyond the budget, or the order is genuinely
 	// under-paid; both leave it open, which is the safe outcome.
 	return nil
+}
+
+// orderName keeps a log line readable when the order was never found.
+func orderName(orderID string) string {
+	if orderID == "" {
+		return "(unknown)"
+	}
+	return orderID
 }
 
 // waitBeforeRetry reports whether pausing before the next read could change the
@@ -255,27 +293,30 @@ func (s *saga) waitBeforeRetry(last attemptResult) bool {
 // Errors other than "not found" are returned rather than swallowed: a failed
 // read is not evidence that an order should stay open, and the dead-letter
 // writer exists to record exactly this.
-func (s *saga) attemptTransition(reference string) (attemptResult, error) {
+func (s *saga) attemptTransition(reference string) (attempt, error) {
 	ctx := context.Background()
 	pmt, err := s.payments.GetByReference(ctx, reference)
 	switch {
 	case errors.Is(err, tables.ErrRecordNotFound):
 		// We are reacting to this payment's own event, so the payment exists on
 		// the stream; the payment projector has just not written it yet.
-		return resultUnprojected, nil
+		return attempt{result: resultUnprojected}, nil
 	case err != nil:
-		return resultSettled, err
+		return attempt{}, err
 	}
 	if pmt == nil || pmt.OrderForeignKey == "" {
-		return resultSettled, nil
+		return attempt{}, nil
 	}
 	// Payments made before the order entity landed put a team or user id in
 	// OrderForeignKey and name the kind in OrderType. There is no order to
 	// settle and never will be, so this is terminal rather than a projection
 	// race — telling the two apart is what keeps the retries below meaningful.
 	if pmt.OrderType != payment.OrderTypeOrder {
-		return resultSettled, nil
+		return attempt{}, nil
 	}
+
+	// From here on the order is named, so every outcome can carry it.
+	named := attempt{orderID: pmt.OrderForeignKey}
 
 	o, err := s.q.GetByID(ctx, pmt.OrderForeignKey)
 	switch {
@@ -284,22 +325,27 @@ func (s *saga) attemptTransition(reference string) (attemptResult, error) {
 		// are on the stream — the order projector is simply behind this saga.
 		// Retryable: this is the replay race that would otherwise leave a paid
 		// order showing as open for the lifetime of the process.
-		return resultUnprojected, nil
+		named.result = resultUnprojected
+		return named, nil
 	case err != nil:
-		return resultSettled, err
+		return named, err
 	}
+	// Already terminal. Expected rather than exceptional: a transfer closes its own
+	// orders in the same burst that publishes their payments, so by the time this
+	// runs the order is normally paid already. Nothing to do, and nothing to say.
 	if o.Status != StatusOpen {
-		return resultSettled, nil
+		return named, nil
 	}
 	// A free order (TotalAmount == 0) shouldn't auto-transition on a random
 	// payment hitting it — it'd never be in this code path without a positive
 	// payment, but guard anyway. Commands.Settle is the only way a zero-total
 	// order reaches StatusPaid.
 	if o.TotalAmount == 0 {
-		return resultSettled, nil
+		return named, nil
 	}
 	if !covered(o.TotalAmount, o.PaidAmount) {
-		return resultUnderpaid, nil
+		named.result = resultUnderpaid
+		return named, nil
 	}
 
 	paid := messages.NathejkOrderPaid{
@@ -312,9 +358,9 @@ func (s *saga) attemptTransition(reference string) (attemptResult, error) {
 	out.SetBody(&paid)
 	if err := s.p.Publish(out); err != nil {
 		log.Printf("order saga: publish paid for %s: %v", o.OrderID, err)
-		return resultSettled, err
+		return named, err
 	}
-	return resultSettled, nil
+	return named, nil
 }
 
 // covered reports whether an order owing total is fully covered by payments

@@ -3,6 +3,8 @@ package order
 import (
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -513,5 +515,131 @@ func TestSagaWithoutYearHandlesEverySeason(t *testing.T) {
 	}
 	if len(pub.Messages) != 1 {
 		t.Fatalf("want the transition, got %d events", len(pub.Messages))
+	}
+}
+
+// captureLog redirects the standard logger for the duration of a test.
+func captureLog(t *testing.T) *strings.Builder {
+	t.Helper()
+	var buf strings.Builder
+	flags := log.Flags()
+	out := log.Writer()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(out)
+		log.SetFlags(flags)
+	})
+	return &buf
+}
+
+// Giving up must never be silent.
+//
+// This is the second half of a real incident: a transfer's credit order sat open
+// with nothing owed, and the branch that abandoned it — "looks under-paid" — logged
+// nothing at all, which made it indistinguishable from an order the saga had
+// correctly left alone. Both exhaustion branches must name the payment, name the
+// order, and say that a replay is what fixes it.
+func TestSagaLogsWhenItGivesUp(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		orders []*Order
+		want   string
+	}{
+		{"looks under-paid", []*Order{openUnpaidOrder()}, "under-paid"},
+		{"never projected", []*Order{nil}, "not projected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureLog(t)
+			s, pub, _ := newTestSaga(tc.orders...)
+			s.CaughtUp()
+
+			if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+				t.Fatalf("HandleMessage: %v", err)
+			}
+			if len(pub.Messages) != 0 {
+				t.Fatalf("no transition expected, got %v", pub.Subjects())
+			}
+			got := buf.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("log should say why it gave up, got %q", got)
+			}
+			if !strings.Contains(got, "ref-1") {
+				t.Errorf("log should name the payment, got %q", got)
+			}
+			if !strings.Contains(got, "replay") {
+				t.Errorf("log should say a replay is what settles it, got %q", got)
+			}
+		})
+	}
+}
+
+// The under-paid give-up must name the order, which is the whole point of carrying
+// it through the attempt: a line naming only the payment costs a manual join to
+// answer "which order is stuck?".
+func TestSagaGiveUpNamesTheOrder(t *testing.T) {
+	buf := captureLog(t)
+	s, _, _ := newTestSaga(openUnpaidOrder())
+	s.CaughtUp()
+
+	if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "order-1") {
+		t.Errorf("log should name the order, got %q", got)
+	}
+}
+
+// An order that never projected cannot be named, and the log must still be
+// readable rather than showing an empty gap.
+func TestSagaGiveUpToleratesAnUnnamedOrder(t *testing.T) {
+	buf := captureLog(t)
+	s, _, _ := newTestSaga(nil)
+	s.payments = sagaFakePayments{pmt: nil}
+	s.CaughtUp()
+
+	if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	// A payment naming no order is terminal on the first read, so nothing is
+	// logged — the give-up branches are only for orders that might have settled.
+	if got := buf.String(); got != "" {
+		t.Errorf("a payment with no order is not a give-up, logged %q", got)
+	}
+	if got := orderName(""); got != "(unknown)" {
+		t.Errorf("orderName(\"\") = %q, want a readable placeholder", got)
+	}
+}
+
+// The case the transfer command now creates on purpose: the order is already paid
+// by the time the saga sees the payment, because whoever published both closed the
+// order itself. It must be a silent no-op — no second order.paid, and nothing that
+// looks like a failure.
+func TestSagaIsANoOpForAnAlreadySettledTransferOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		order *Order
+	}{
+		{"charge half", &Order{OrderID: "order-1", Year: "2026", Status: StatusPaid, TotalAmount: 42500, PaidAmount: 42500}},
+		{"credit half", &Order{OrderID: "order-1", Year: "2026", Status: StatusPaid, TotalAmount: -42500, PaidAmount: -42500}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureLog(t)
+			s, pub, slept := newTestSaga(tc.order)
+			s.CaughtUp()
+
+			if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+				t.Fatalf("HandleMessage: %v", err)
+			}
+			if len(pub.Messages) != 0 {
+				t.Errorf("must not republish paid for a settled order, got %v", pub.Subjects())
+			}
+			if len(*slept) != 0 {
+				t.Errorf("an already-settled order must cost no retries, waited %v", *slept)
+			}
+			if got := buf.String(); got != "" {
+				t.Errorf("this is the normal case, not something to log: %q", got)
+			}
+		})
 	}
 }

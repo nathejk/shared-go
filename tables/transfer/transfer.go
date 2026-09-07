@@ -273,16 +273,41 @@ func fundingOrder(paid []order.MemberLine) string {
 }
 
 // publishHalf creates one side of the transfer: a dedicated order with the lines,
-// covered so it cannot sit open.
+// the payment covering it, and the order.paid that closes it.
 //
 // A dedicated order, never EnsureOpenOrder: reusing the owner's existing open order
 // would contaminate a real, unpaid order with transfer lines and make its total
 // meaningless.
 //
 // amount is the order's total: negative for the credit half, positive for the
-// charge half. A credit is covered by a negative payment, which is what lets both
-// halves settle through the one settlement path (the payment saga) and be audited
-// identically — paidAmount == totalAmount on both.
+// charge half. A credit is covered by a negative payment, so paidAmount ==
+// totalAmount on both halves and the two are audited identically.
+//
+// # Why this closes its own orders
+//
+// Because it can, and because leaving it to the payment saga did not work.
+//
+// The saga is a one-shot reaction to payment.received that reads its service's own
+// projections, and this command publishes its events in a burst — the credit
+// order's payment lands milliseconds after the order was created, before the order
+// projector has necessarily caught up. The saga then retries for a couple of
+// seconds and gives up permanently, because nothing will ever publish another
+// payment.received for that order. The credit half loses that race structurally:
+// it is published first, so its payment arrives when the projector has had the
+// least time. In dev, two of three transfers left the sending team's credit order
+// showing "Åben" with nothing owed, recoverable only by restarting the service so
+// the stream replayed.
+//
+// The command already knows both orders are covered — it created the orders *and*
+// the payments in the same operation. Rediscovering that fact asynchronously,
+// through another consumer's lag, was the design flaw. Publishing order.paid here
+// removes the race rather than widening a retry budget against a window with no
+// upper bound, and makes a transfer as reliable as its own reassignment.
+//
+// This is not "a caller may assert paid". It is the same freedom Commands.Settle
+// has, for the same reason: the order owes nothing, and here that is known rather
+// than believed, having just been computed. The saga remains the only path for an
+// order whose money arrives from outside.
 func (c *commander) publishHalf(orderID string, ownerType types.TeamType, ownerID types.TeamID, lines []messages.NathejkOrder_Line, amount int, reference string, source *types.PaymentSource) error {
 	now := time.Now()
 	if err := c.publish(fmt.Sprintf("NATHEJK:%s.order.%s.created", c.year, orderID), &messages.NathejkOrderCreated{
@@ -308,20 +333,28 @@ func (c *commander) publishHalf(orderID string, ownerType types.TeamType, ownerI
 		return err
 	}
 
-	if amount == 0 {
-		// A transfer of nothing but zero-priced lines. No payment is meaningful,
-		// and the saga only settles orders that owe something, so the order would
-		// sit open — and therefore mutable — forever. This publishes exactly what
-		// Commands.Settle publishes, without its read-back: we already know the
-		// total is zero, having just computed it, whereas Settle would have to wait
-		// for the projection to catch up with the event above.
-		return c.publish(fmt.Sprintf("NATHEJK:%s.order.%s.paid", c.year, orderID), &messages.NathejkOrderPaid{
-			OrderID:    orderID,
-			PaidAmount: 0,
-			Timestamp:  now,
-		})
+	// A transfer of nothing but zero-priced lines gets no payment: there would be
+	// no money to record. Everything else is covered before it is closed, so the
+	// payment trail always precedes the state change.
+	if amount != 0 {
+		if err := c.publishPayment(orderID, amount, reference, source, now); err != nil {
+			return err
+		}
 	}
-	return c.publishPayment(orderID, amount, reference, source, now)
+
+	// Same event, same shape, whatever the amount — including zero, which used to
+	// be the only case handled here. PaidAmount is the order's own signed total, as
+	// the saga would have published it.
+	//
+	// Idempotent by two independent guards, which matters because this deliberately
+	// creates the case where the order is already paid by the time the saga sees
+	// the payment: the projector's handlePaid updates WHERE status='open', and the
+	// saga returns early on any order that is not open.
+	return c.publish(fmt.Sprintf("NATHEJK:%s.order.%s.paid", c.year, orderID), &messages.NathejkOrderPaid{
+		OrderID:    orderID,
+		PaidAmount: amount,
+		Timestamp:  now,
+	})
 }
 
 // publishPayment covers one half of the transfer with an internal-transfer

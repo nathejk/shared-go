@@ -12,6 +12,7 @@ module github.com/nathejk/shared-go
 types/     # domain value types — Slug, TeamID, PhoneNumber, EmailAddress, …
 messages/  # JetStream event payloads — the wire contract between services
 tables/    # table entities — SQL projector + read API (+ commands, sagas)
+docs/      # integration guides for capabilities that span several entities
 ```
 
 There is no `cmd/`, no `main`, and no infrastructure here. This module is
@@ -42,8 +43,10 @@ few enums and time helpers:
 
 - Identity: `ID`, `Slug`, `YearSlug`, `TeamID`, `MemberID`, `UserID`
 - Contact: `PhoneNumber`, `EmailAddress` (both with normalisation/validation)
-- Enums: `TeamType`, `SignupStatus`, `PaymentStatus`, `SectionType`, `CorpsSlug`,
-  `Currency`
+- Enums: `TeamType`, `SignupStatus`, `PaymentStatus`, `PaymentMethod`,
+  `SectionType`, `CorpsSlug`, `Currency`
+- Value objects: `PaymentSource` — where a transferred payment's money originally
+  came from
 - Time: `Date`, `UnixtimeString`, `UnixtimeInteger` (the latter two convert to
   `*time.Time`, since the legacy monolith emits both shapes)
 - Geo: `Latitude`, `Longitude`, `Position`
@@ -81,8 +84,13 @@ a saga.
 | `section` | `New(p, w, r)` | commands, filter |
 | `senior` | `New(w, r)` | filter |
 | `signup` | `New(p, w, r, services ...service)` | commands, repository |
-| `spejder` | `New(w, r)` | filter |
+| `spejder` | `New(w, r)` | filter, `RosterReader` |
+| `transfer` | `New(p, roster, lines, sources, year)` | commands only — no table of its own |
 | `vehicle` | `New(p, w, r)` | commands, filter |
+
+`transfer` is the odd one out: it owns no table and projects nothing. It is a
+command that spans three entities — see
+[docs/moving-a-paid-member.md](docs/moving-a-paid-member.md).
 
 The root `tables` package holds only what the entities share:
 
@@ -121,6 +129,10 @@ satisfies it. Existing ports:
   `payment.WithProvider`
 - `order.PaymentReader` — the slice of the payment read API the order saga
   needs; `payment.Queries` satisfies it, pinned by an assertion in `order`
+- `spejder.RosterReader`, `order.MemberLineReader`, `payment.SourceResolver` —
+  the three reads the `transfer` command needs. Declared beside the data they
+  read rather than added to the existing `Queries` interfaces, which other repos
+  implement with fakes: widening a `Queries` breaks every one of them
 
 `klan`, `payment` and `signup` take their optional collaborators as variadic
 option functions (`WithProductQueries`, `WithProvider`, `WithTeamMaxMemberCount`,
@@ -184,3 +196,14 @@ root `table` package still holds legacy projectors (`confirm.go`, `registrant.go
 entities. When one of them moves, it moves the same way: a sub-package with
 `table.go`, `table.sql`, a projector, a read API, and no import that points back
 at a single service.
+
+---
+
+## Guides
+
+Capabilities that span several entities get a document of their own, because no
+single package's doc comment is the right place for them:
+
+- [Moving a paid member between teams](docs/moving-a-paid-member.md) — the
+  seat-transfer command: wiring, the error set, publish ordering, deterministic
+  ids, payment provenance, and the upgrade notes for a consuming service.

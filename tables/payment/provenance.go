@@ -19,6 +19,10 @@ type SourceResolver interface {
 	// SourceOf resolves the provenance a transfer should carry when it moves the
 	// money of the payment named by reference.
 	SourceOf(ctx context.Context, reference string) *types.PaymentSource
+
+	// SourceOfOrder is SourceOf for the payment that covered an order, which is
+	// the form a caller moving money between orders actually has to hand.
+	SourceOfOrder(ctx context.Context, orderID string) *types.PaymentSource
 }
 
 // SourceOf resolves the provenance a transfer should carry when it moves the
@@ -160,3 +164,54 @@ func (q *querier) sourceRowDataset(reference string) *goqu.SelectDataset {
 }
 
 var _ SourceResolver = (*querier)(nil)
+
+// SourceOfOrder — see SourceResolver.SourceOfOrder.
+//
+// Resolves through the payment that actually secured the order: reserved or
+// received, since those are the only states every paid-amount computation counts,
+// and the earliest of them when an order was paid in several parts. The earliest
+// rather than the largest because it is the one that made the order real, and
+// because "earliest" is stable — a later capture must not change the answer for a
+// transfer that already happened.
+//
+// An order with no such payment yields types.UnknownPaymentSource(), which is the
+// honest answer for a free order, a settled one, or an order whose payment is not
+// projected here.
+func (q *querier) SourceOfOrder(ctx context.Context, orderID string) *types.PaymentSource {
+	if orderID == "" {
+		return types.UnknownPaymentSource()
+	}
+	ref, ok := q.coveringReference(ctx, orderID)
+	if !ok {
+		return types.UnknownPaymentSource()
+	}
+	return q.SourceOf(ctx, ref)
+}
+
+// coveringReference returns the earliest secured payment on an order.
+func (q *querier) coveringReference(ctx context.Context, orderID string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	var ref string
+	found, err := q.coveringReferenceDataset(orderID).ScanValContext(ctx, &ref)
+	if err != nil {
+		log.Printf("payment: finding the payment covering order %q: %v", orderID, err)
+		return "", false
+	}
+	return ref, found && ref != ""
+}
+
+func (q *querier) coveringReferenceDataset(orderID string) *goqu.SelectDataset {
+	return q.db.
+		From(goqu.T("payment").As("p")).
+		Select(goqu.I("p.reference")).
+		Prepared(true).
+		Where(
+			goqu.I("p.orderForeignKey").Eq(orderID),
+			goqu.I("p.orderType").Eq(OrderTypeOrder),
+			goqu.I("p.status").In(string(types.PaymentStatusReserved), string(types.PaymentStatusReceived)),
+		).
+		Order(goqu.I("p.createdAt").Asc(), goqu.I("p.reference").Asc()).
+		Limit(1)
+}

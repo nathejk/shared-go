@@ -15,6 +15,7 @@ func (c *consumer) Consumes() (subjs []cqrs.Subject) {
 	return []cqrs.Subject{
 		cqrs.SubjectFromStr("NATHEJK.*.spejder.*.updated"),
 		cqrs.SubjectFromStr("NATHEJK.*.spejder.*.deleted"),
+		cqrs.SubjectFromStr("NATHEJK.*.spejder.*.reassigned"),
 		cqrs.SubjectFromStr("NATHEJK:*.patrulje.*.started"),
 	}
 }
@@ -88,6 +89,34 @@ func (c *consumer) HandleMessage(msg cqrs.Message) error {
 			body.MemberID,
 		}
 		return c.w.Consume(fmt.Sprintf(query, args...))
+	case msg.Subject().Match("nathejk.*.spejder.*.reassigned"):
+		var body messages.NathejkMemberReassigned
+		if err := msg.Body(&body); err != nil {
+			return err
+		}
+		if body.MemberID == "" || body.ToTeamID == "" {
+			return nil
+		}
+		// The only branch in this file that writes teamId. spejder.*.updated
+		// deliberately does not, so a pre-race reassignment is the single way a
+		// member's team changes on the roster.
+		//
+		// Scoped by year *and* memberId, unlike the UPDATE above it: the primary
+		// key is (year, memberId) and member ids are not year-scoped, so a
+		// reassignment in one season would otherwise rewrite the same member's
+		// row in another.
+		//
+		// Idempotent by construction — it sets an absolute value rather than
+		// moving one — so a replay lands on the same row content.
+		query := `UPDATE spejder SET teamId=%q, updatedAt=%q WHERE year=%q AND memberId=%q`
+		args := []any{
+			body.ToTeamID,
+			msg.Time(),
+			msg.Subject().Parts()[1],
+			body.MemberID,
+		}
+		return c.w.Consume(fmt.Sprintf(query, args...))
+
 	case msg.Subject().Match("nathejk.*.spejder.*.deleted"):
 		var body messages.NathejkScoutDeleted
 		if err := msg.Body(&body); err != nil {

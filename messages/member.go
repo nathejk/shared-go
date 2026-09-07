@@ -271,6 +271,41 @@ type NathejkMemberTeamMoved struct {
 
 func (NathejkMemberTeamMoved) Status() types.MemberStatus { return types.MemberStatusRacing }
 
+// NathejkMemberReassigned records that a member belongs to a different team
+// **before the race has started**.
+//
+// Distinct from NathejkMemberTeamMoved on purpose, and the two must never be
+// conflated. team.moved describes somebody who *started with one patrol and
+// continued with another*: they are still racing, the origin keeps them on its
+// roster, and initialTeamId is preserved precisely so "where did this member
+// start?" stays answerable. A pre-race reassignment is the opposite in every
+// respect — nothing has started, the member simply belongs to the other team now,
+// and the origin's roster must stop listing them. Encoding it as team.moved would
+// make initialTeamId, the record of where somebody started, into a lie.
+//
+// Published on NATHEJK.{year}.spejder.{memberId}.reassigned and projected by the
+// spejder roster, which updates teamId. It is the only event that does: the
+// spejder.*.updated branch deliberately leaves teamId alone.
+//
+// # No Status(), deliberately
+//
+// This is not a NathejkMemberEvent and must not become one. The status projection
+// has to *ignore* a reassignment: pre-race there is no status row and no
+// activeMemberCount to recompute, and writing initialTeamId would be actively
+// wrong — a reassigned member who later races has always been on their new team.
+// Giving this type a Status() method would invite exactly the projection that must
+// not happen.
+//
+// FromTeamID is carried for the same reason team.moved carries it: a consumer can
+// act on both teams without reading the previous row, so a replay produces the
+// same result whatever order it sees things in.
+type NathejkMemberReassigned struct {
+	MemberID   types.MemberID     `json:"memberId"`
+	FromTeamID types.TeamID       `json:"fromTeamId"`
+	ToTeamID   types.TeamID       `json:"toTeamId"`
+	Actor      NathejkMemberActor `json:"actor"`
+}
+
 // NathejkMemberPickupAccepted records that a car has taken the member aboard.
 //
 // Published by the dispatch desk (PRD 009, task 118), and eventually by the

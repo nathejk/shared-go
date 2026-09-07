@@ -142,3 +142,23 @@ func TestNoMemberEventCarriesACaseID(t *testing.T) {
 		}
 	}
 }
+
+// A pre-race reassignment must not be a lifecycle event.
+//
+// The status projection has to ignore it: pre-race there is no status row and no
+// activeMemberCount to recompute, and writing initialTeamId — the record of where
+// somebody *started* — would be actively wrong, because a reassigned member who
+// later races has always been on their new team. Every projection here dispatches
+// on NathejkMemberEvent, so giving this type a Status() method is all it would take
+// to have it projected as a race-time move. This test is the guard.
+func TestReassignmentIsNotALifecycleEvent(t *testing.T) {
+	if _, ok := any(messages.NathejkMemberReassigned{}).(messages.NathejkMemberEvent); ok {
+		t.Error("NathejkMemberReassigned must not implement NathejkMemberEvent; the status projection must ignore it")
+	}
+	// team.moved, by contrast, is one — and stays one. The two facts are different:
+	// a moved member started with one patrol and continued with another, which is
+	// why the origin keeps them and initialTeamId survives.
+	if _, ok := any(messages.NathejkMemberTeamMoved{}).(messages.NathejkMemberEvent); !ok {
+		t.Error("NathejkMemberTeamMoved must remain a lifecycle event")
+	}
+}

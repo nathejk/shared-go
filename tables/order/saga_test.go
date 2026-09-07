@@ -227,6 +227,141 @@ func TestSagaNoTransitionWhenNotOpenOrZeroTotal(t *testing.T) {
 	}
 }
 
+// A credit order — negative total, produced when a paid seat is re-attributed to
+// another owner — used to fall between the saga (which read "nothing to do") and
+// Settle (which read "you owe money"), leaving it open, and therefore mutable,
+// forever. Covered by its matching negative payment it must settle like any other
+// order that owes nothing further.
+func TestSagaSettlesCoveredCreditOrder(t *testing.T) {
+	s, pub, _ := newTestSaga(&Order{
+		OrderID: "order-1", Year: "2026", Status: StatusOpen,
+		TotalAmount: -45000, PaidAmount: -45000,
+	})
+	s.CaughtUp()
+
+	if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want 1 order.paid event for the covered credit, got %d", len(pub.Messages))
+	}
+	var body messages.NathejkOrderPaid
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.PaidAmount != -45000 {
+		t.Errorf("paidAmount = %d, want the credit's own (negative) amount", body.PaidAmount)
+	}
+}
+
+// A credit nobody has honoured is not settled. Freezing it would make the order
+// immutable while hiding that the money never moved, so it must stay open — and
+// reuse resultUnderpaid rather than inventing a third outcome, which is what the
+// waits below observe.
+func TestSagaLeavesUncoveredCreditOrderOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		paid int
+	}{
+		{"no payment yet", 0},
+		{"partially credited", -20000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, pub, slept := newTestSaga(&Order{
+				OrderID: "order-1", Year: "2026", Status: StatusOpen,
+				TotalAmount: -45000, PaidAmount: tc.paid,
+			})
+			s.CaughtUp()
+
+			if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+				t.Fatalf("HandleMessage: %v", err)
+			}
+			if len(pub.Messages) != 0 {
+				t.Errorf("an uncovered credit must not be frozen, got %v", pub.Subjects())
+			}
+			if len(*slept) != DefaultSagaAttempts-1 {
+				t.Errorf("want the underpaid retry budget (%d waits), got %d", DefaultSagaAttempts-1, len(*slept))
+			}
+		})
+	}
+}
+
+// An over-credit (more credited than owed) is the mirror of an over-payment,
+// which settles.
+func TestSagaSettlesOverCreditedOrder(t *testing.T) {
+	s, pub, _ := newTestSaga(&Order{
+		OrderID: "order-1", Year: "2026", Status: StatusOpen,
+		TotalAmount: -45000, PaidAmount: -50000,
+	})
+	s.CaughtUp()
+
+	if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want 1 order.paid event, got %d", len(pub.Messages))
+	}
+}
+
+// The settlement point for every shape of order, in one table, so a later change
+// to covered() cannot quietly move one of them.
+func TestSagaSettlementPointByOrderShape(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		total, paid int
+		wantSettle  bool
+	}{
+		{"charge covered", 45000, 45000, true},
+		{"charge over-paid", 45000, 50000, true},
+		{"charge one øre short", 45000, 44999, false},
+		{"charge unpaid", 45000, 0, false},
+		{"credit covered", -45000, -45000, true},
+		{"credit one øre short", -45000, -44999, false},
+		{"credit uncovered", -45000, 0, false},
+		{"zero total", 0, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, pub, _ := newTestSaga(&Order{
+				OrderID: "order-1", Year: "2026", Status: StatusOpen,
+				TotalAmount: tc.total, PaidAmount: tc.paid,
+			})
+			s.CaughtUp()
+
+			if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+				t.Fatalf("HandleMessage: %v", err)
+			}
+			if got := len(pub.Messages) == 1; got != tc.wantSettle {
+				t.Errorf("settled = %v, want %v (total=%d paid=%d)", got, tc.wantSettle, tc.total, tc.paid)
+			}
+		})
+	}
+}
+
+// Replay safety at the saga's own layer: the second delivery of the same
+// payment.received finds the order already paid and publishes nothing. (The
+// projector's WHERE status='open' guard is the second layer.)
+func TestSagaCreditOrderIsIdempotentOnReplay(t *testing.T) {
+	credit := &Order{
+		OrderID: "order-1", Year: "2026", Status: StatusOpen,
+		TotalAmount: -45000, PaidAmount: -45000,
+	}
+	settled := &Order{
+		OrderID: "order-1", Year: "2026", Status: StatusPaid,
+		TotalAmount: -45000, PaidAmount: -45000,
+	}
+	s, pub, _ := newTestSaga(credit, settled)
+	s.CaughtUp()
+
+	for i := 0; i < 2; i++ {
+		if err := s.HandleMessage(receivedMsg(t, "ref-1")); err != nil {
+			t.Fatalf("HandleMessage %d: %v", i, err)
+		}
+	}
+	if len(pub.Messages) != 1 {
+		t.Fatalf("want exactly one order.paid across two deliveries, got %d", len(pub.Messages))
+	}
+}
+
 // The replay race hq reported: the saga reaches a payment.received before the
 // order projector has written the order, so GetByID says not-found. Treating
 // that as terminal left a paid order showing as open until some later restart

@@ -1,11 +1,11 @@
 # 156 — [shared-go] Settle credit (negative-total) orders
 
-**Status:** open
+**Status:** done
 **Priority:** high
 **Created:** 2026-09-07
-**Picked up by:**
-**Started:**
-**Completed:**
+**Picked up by:** zed-agent
+**Started:** 2026-09-07
+**Completed:** 2026-09-07
 
 > **This task is implemented in the `github.com/nathejk/shared-go` repo, not here.**
 > It is tracked on this board because hq's PRD 012 depends on it. Lift the whole file
@@ -142,18 +142,18 @@ exists.
 
 ## Acceptance Criteria
 
-- [ ] A credit order (negative `totalAmount`) fully covered by its payment(s) reaches a
+- [x] A credit order (negative `totalAmount`) fully covered by its payment(s) reaches a
       terminal status instead of remaining `open`
-- [ ] A credit order that is **not** covered stays `open` and is not frozen
-- [ ] Positive-total orders behave exactly as before — same settlement point, same
+- [x] A credit order that is **not** covered stays `open` and is not frozen
+- [x] Positive-total orders behave exactly as before — same settlement point, same
       over-payment behaviour
-- [ ] Zero-total orders still settle only via `Settle`, unchanged
-- [ ] Replaying the same events twice leaves the order in the same state (no double
+- [x] Zero-total orders still settle only via `Settle`, unchanged
+- [x] Replaying the same events twice leaves the order in the same state (no double
       publish of `order.paid`, existing `status='open'` guard preserved)
-- [ ] Unit test covering: credit covered, credit uncovered, positive covered, zero
-- [ ] Chosen route (A or B) and the negative-payment-vs-no-payment decision recorded in
+- [x] Unit test covering: credit covered, credit uncovered, positive covered, zero
+- [x] Chosen route (A or B) and the negative-payment-vs-no-payment decision recorded in
       the progress log with the reason
-- [ ] No new stock behaviour: credits still do not release reserved stock
+- [x] No new stock behaviour: credits still do not release reserved stock
 
 ## Progress Log
 
@@ -161,3 +161,41 @@ exists.
 
 - 2026-09-07 — Created from hq PRD 012 §8 obstacle 2 and §11 Q1/Q2. Written to be lifted
   into shared-go. Blocks task 159; task 157 and 158 are independent of it.
+- 2026-09-07 — Lifted into shared-go and picked up. Plan: route A (teach the saga), with
+  the symmetrical negative payment. Reason recorded in the next entry.
+- 2026-09-07 — **Decision: route A (teach the saga), covered by a symmetrical negative
+  payment.** Reason: route B would require task 159 to call `Settle` on the two orders it
+  has just created *by publishing events*, so the read model it reads would almost always
+  be behind and the call would fail on `ErrRecordNotFound` or on a stale `TotalAmount`.
+  The saga already owns exactly that problem — its `resultUnprojected` / `resultUnderpaid`
+  retry budget exists because the payment and order projections lag the events it reacts
+  to — so putting credit settlement anywhere else means reinventing it. Keeping one
+  settlement path also means there is one place where "this order owes nothing further"
+  is decided, in both directions.
+
+  The negative payment follows from route A (the saga is triggered by
+  `payment.*.received`), but is the better shape independently: `payment.amount` is already
+  a signed `INT` and the `paidAmount` subquery already plain-`SUM`s it, so both halves of a
+  transfer end up with `paidAmount == totalAmount` and are auditable identically. "No
+  payment at all" would leave the credit side with no trail precisely where somebody will
+  ask where the money went.
+- 2026-09-07 — Implemented in `tables/order/saga.go`. `attemptTransition`'s
+  `TotalAmount <= 0` guard became `TotalAmount == 0` (zero-total orders still reach
+  `paid` only through `Commands.Settle`), and the `PaidAmount < TotalAmount` comparison
+  became a new package-level `covered(total, paid int) bool`: `paid >= total` for a charge,
+  `paid <= total` for a credit. An uncovered credit returns the existing
+  `resultUnderpaid`, so it keeps the retry budget and stays `open`. No third outcome, no
+  new event, no projector change, no schema change.
+- 2026-09-07 — Tests added to `tables/order/saga_test.go`: covered credit settles (and
+  publishes its own negative `paidAmount`), uncovered credit stays open with the underpaid
+  retry budget (no payment yet, and partially credited), over-credit settles, a table
+  pinning the settlement point for all eight total/paid shapes, and a two-delivery replay
+  proving one `order.paid`. `go test ./tables/order/` green; full `go test ./...` green.
+- 2026-09-07 — **Contract for hq:** nothing changed. `order.Status` on the wire is still
+  `"OPEN"` / `"PAID"`, no exported error was added or removed, and `Settle`'s signature is
+  untouched. `Settle` still returns `ErrOrderNotFree` for a credit order — by design:
+  credits settle through the saga, and its doc comment now says so. The only observable
+  difference is that a negative-total order covered by a negative payment now reaches
+  `PAID`; there are no such orders in production yet, because nothing creates them until
+  task 159.
+- 2026-09-07 — Completed. Credit orders are settleable; task 159 is unblocked on this axis.

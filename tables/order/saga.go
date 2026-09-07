@@ -44,12 +44,14 @@ const DefaultSagaAttempts = 5
 // reject mutations with ErrNotOpen, giving the immutability guarantee
 // users asked for.
 //
-// This is the only path by which an order that *owes money* reaches StatusPaid.
-// An order that owes nothing — one recording a free size change, say — will never
-// see a payment, so Commands.Settle publishes the same event with a paid amount
-// of zero. The two cannot be confused: Settle refuses a non-zero total, and the
-// TotalAmount <= 0 guard in attemptTransition keeps the saga from settling a free
-// order on the back of some unrelated payment.
+// This is the only path by which an order that *owes money* reaches StatusPaid,
+// in either direction: a charge whose payments have arrived, and a credit whose
+// matching negative payment has been recorded (see covered). An order that owes
+// nothing — one recording a free size change, say — will never see a payment, so
+// Commands.Settle publishes the same event with a paid amount of zero. The two
+// cannot be confused: Settle refuses a non-zero total, and the TotalAmount == 0
+// guard in attemptTransition keeps the saga from settling a free order on the
+// back of some unrelated payment.
 //
 // The saga is idempotent at multiple layers:
 //
@@ -291,11 +293,12 @@ func (s *saga) attemptTransition(reference string) (attemptResult, error) {
 	}
 	// A free order (TotalAmount == 0) shouldn't auto-transition on a random
 	// payment hitting it — it'd never be in this code path without a positive
-	// payment, but guard anyway.
-	if o.TotalAmount <= 0 {
+	// payment, but guard anyway. Commands.Settle is the only way a zero-total
+	// order reaches StatusPaid.
+	if o.TotalAmount == 0 {
 		return resultSettled, nil
 	}
-	if o.PaidAmount < o.TotalAmount {
+	if !covered(o.TotalAmount, o.PaidAmount) {
 		return resultUnderpaid, nil
 	}
 
@@ -312,4 +315,27 @@ func (s *saga) attemptTransition(reference string) (attemptResult, error) {
 		return resultSettled, err
 	}
 	return resultSettled, nil
+}
+
+// covered reports whether an order owing total is fully covered by payments
+// summing to paid.
+//
+// A charge (total > 0) is covered once at least that much has arrived. A credit
+// (total < 0) is the mirror image: the order is *owed* money, so it is covered
+// once payments have reached down to its total — i.e. once a negative payment of
+// at least the same magnitude has been recorded against it. Credits are produced
+// when a seat paid for by one owner is re-attributed to another: the origin gets
+// a credit order, the destination a matching charge, and the pair nets to zero.
+//
+// Comparing "outstanding" rather than assuming positive amounts is what keeps a
+// credit order from being unclosable. Left uncovered it stays open — a credit
+// nobody has honoured is not settled, and freezing it would hide that — but once
+// covered it reaches the same terminal status by the same path as a charge, so
+// there is exactly one settlement rule for orders that owe money in either
+// direction.
+func covered(total, paid int) bool {
+	if total < 0 {
+		return paid <= total
+	}
+	return paid >= total
 }

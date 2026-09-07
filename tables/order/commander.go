@@ -338,7 +338,9 @@ var ErrEmptyOrder = errors.New("order has no lines")
 // Settling is not a payment. An order that owes money reaches StatusPaid exactly
 // one way — the payment saga, after money has actually arrived — and letting a
 // command shortcut that would turn "freeze this agreement" into "take these goods
-// for nothing".
+// for nothing". The same holds in the other direction: a credit order (negative
+// total) is owed money, and settles through the saga once its matching negative
+// payment has been recorded, not by being frozen here.
 var ErrOrderNotFree = errors.New("order total is not zero")
 
 // Settle — see Commands.Settle.

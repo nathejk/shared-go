@@ -93,6 +93,9 @@ func (q *querier) allDataset(f Filter) *goqu.SelectDataset {
 	if len(f.CustodianUserIDs) > 0 {
 		where["custodianUserId"] = userIDStrings(f.CustodianUserIDs)
 	}
+	if f.LicensePlate != "" {
+		where["licensePlate"] = f.LicensePlate
+	}
 
 	// Prepared: the filter values travel as placeholders rather than being
 	// interpolated into the statement. GetByID has always used placeholders via

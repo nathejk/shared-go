@@ -31,15 +31,22 @@ func sqlOf(t *testing.T, f Filter) string {
 	return s
 }
 
-// whereOf returns only the predicate. Asserting against the whole statement would
-// be meaningless here: every column this filters on is also in the SELECT list, so
-// "does the SQL mention driverUserId" is true no matter what the filter did.
+// whereOf returns only the predicate.
+//
+// Asserting against the whole statement would be meaningless here, in two
+// directions: every column this filters on is also in the SELECT list, and the
+// ORDER BY names licensePlate unconditionally. So "does the SQL mention
+// licensePlate" is true no matter what the filter did — which is how the first
+// version of these tests managed to pass for the wrong reason.
 func whereOf(t *testing.T, f Filter) string {
 	t.Helper()
 	s := sqlOf(t, f)
 	_, where, found := strings.Cut(s, "WHERE")
 	if !found {
 		t.Fatalf("no WHERE clause in:\n%s", s)
+	}
+	if predicate, _, ordered := strings.Cut(where, "ORDER BY"); ordered {
+		return predicate
 	}
 	return where
 }
@@ -144,4 +151,35 @@ func TestFilterValuesTravelAsPlaceholders(t *testing.T) {
 	if !found {
 		t.Errorf("argument should travel separately, got %v", args)
 	}
+}
+
+// A plate filter is what makes duplicate detection possible before a registration
+// is published, so it must narrow on the plate and nothing else.
+func TestLicensePlateFilterNarrowsOnThePlate(t *testing.T) {
+	got := whereOf(t, Filter{LicensePlate: "DK+AB12345"})
+	if !strings.Contains(got, "`licensePlate`") {
+		t.Errorf("expected a licensePlate predicate, got:\n%s", got)
+	}
+	if !contains(argsOf(t, Filter{LicensePlate: "DK+AB12345"}), "DK+AB12345") {
+		t.Error("the plate should travel as an argument")
+	}
+}
+
+// An empty plate is "do not filter", as with every other field here. Getting this
+// wrong would make a duplicate check match the vehicles with no plate at all
+// rather than none.
+func TestEmptyLicensePlateDoesNotFilter(t *testing.T) {
+	got := whereOf(t, Filter{})
+	if strings.Contains(got, "`licensePlate`") {
+		t.Errorf("an empty plate must not add a predicate, got:\n%s", got)
+	}
+}
+
+func contains(args []any, want any) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
 }

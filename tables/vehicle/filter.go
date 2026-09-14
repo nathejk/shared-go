@@ -76,4 +76,16 @@ type Filter struct {
 	// An empty slice does not filter; it is not the same as asking for vehicles
 	// with no custodian.
 	CustodianUserIDs []types.UserID
+
+	// LicensePlate matches the vehicle carrying this registration, in the
+	// canonical prefixed form ("DK+AB12345"). Empty does not filter.
+	//
+	// This is how a registration is checked for a duplicate before it is
+	// published: two people registering one car — a crew member and their
+	// passenger both filling in the form — is the likeliest data problem in a
+	// self-registered inventory, and a coordinator reconciling two rows for one
+	// car by hand is the cost. It matches exactly, which is only meaningful
+	// because plates are normalised before they are stored; comparing raw input
+	// would miss "ab 12 345" against "AB12345".
+	LicensePlate string
 }

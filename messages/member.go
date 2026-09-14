@@ -31,46 +31,58 @@ type NathejkMemberAdded struct {
 	TeamID   types.TeamID   `json:"teamId"`
 }
 
-// nathejk:*.member.*.verified
+// nathejk:*.spejder.*.verified
 //
-// NathejkMemberVerified says that a member has looked at the guardian/emergency contact number
-// held for them and acknowledged that it can be reached during the event (hej, PRD 005).
+// NathejkMemberVerified says that a phone number held for a member has been verified, by the
+// member themselves, in `hej` — the app they use. Published by `hej` and by nothing else. It is
+// the first member fact that originates with the member rather than with the register.
 //
-// Published by `hej` — the app the member uses — and by nothing else. It is the first member
-// fact that originates with the member rather than with the register.
+// # What it is for: skipping a question at check-in
 //
-// # Why two phone numbers
+// Check-in establishes each member's emergency contact number at the counter, one member at a
+// time, while a queue forms. Every number verified in the app beforehand is a conversation the
+// counter does not have to have (hej, PRD 015). That is the whole purpose of this event, and it
+// explains the shape: a consumer asks "do we already have a verified number for this member?",
+// and nothing more elaborate than that.
 //
-// The acknowledgement is a claim about a *specific* number ("this number can be contacted during
-// Nathejk"), so it is only meaningful alongside the number it was made about. And the member may
-// acknowledge a number that is NOT the one on file: if they cannot recognise the registered
-// number they are asked to supply the correct one and confirm that instead.
+// # Why two phone numbers, and why either may be absent
 //
-//	PhoneParentAcknowledged — the number the member says can be reached. Authoritative for contacting
-//	                    a guardian during the event.
-//	PhoneParentRegistered   — what the register held at that moment. Kept so two different questions
-//	                    stay answerable:
-//	                      * has the register changed since? (PhoneRegistered != current) → the
-//	                        acknowledgement is stale and must be asked again
-//	                      * did the member correct us? (PhoneParentAcknowledged != PhoneParentRegistered) →
-//	                        the register is wrong and an organizer should fix it
+// Two different numbers get verified by two different mechanisms, at two different moments:
 //
-// Collapsing them into one field makes "stale" and "corrected" indistinguishable, and they call
-// for opposite responses: re-ask the member, versus update the register and leave the member alone.
+//	Phone        — the member's OWN number, proven by challenge-response: they received a PIN by
+//	               SMS on it and typed it back to log in. Nobody is asked anything; the fact falls
+//	               out of logging in. Published once per verified number, so a member logging in
+//	               daily does not restate it.
+//	PhoneContact — the emergency contact number (a parent or guardian, for a spejder) that the
+//	               member confirmed or supplied. Named as the register names it
+//	               (NathejkScoutUpdated.PhoneContact).
+//
+// So the login publishes `Phone` alone, and the contact check publishes `PhoneContact`. Both
+// carry `omitempty`, and on `PhoneContact` that is **deliberate**: a member who cannot recall
+// their contact number, or who skips the check, publishes an event with `Phone` and no
+// `PhoneContact` — which serialises identically to a plain login event. That costs nothing,
+// because both answer the one question above with "not yet", and the member is simply asked at
+// check-in as they would have been anyway. Do not "fix" it into a transmitted empty string
+// expecting to tell the two apart; nothing needs to.
+//
+// # What it deliberately does NOT say
+//
+// It does not carry what the register held at the time, so it cannot answer "did the member
+// correct us, or did the register move since?". Both questions were dropped on purpose (PRD 015
+// §4): neither changes what happens next, which is that the counter either asks or does not.
+// An earlier revision of this type carried `PhoneParentRegistered` for exactly that distinction,
+// and `Year`, which is the second subject token and therefore already known to any consumer.
 type NathejkMemberVerified struct {
 	MemberID types.MemberID `json:"memberId"`
-	Year     types.YearSlug `json:"year"`
 
-	// PhoneParentAcknowledged is normalized. Never empty: a verification that names no number cannot
-	// be checked for staleness later, so it would be a permanent tick for a phone nobody agreed
-	// to — which is the expensive kind of wrong in an emergency-contact flow.
-	PhoneParentAcknowledged types.PhoneNumber `json:"phoneParentAcknowledged"`
+	// Phone is the member's own number, normalized, proven by the SMS PIN they typed at login.
+	Phone types.PhoneNumber `json:"phone,omitempty"`
 
-	// PhoneParentRegistered is what the register held when the member acknowledged. Empty is
-	// meaningful: it says the register had no number and the member supplied one.
-	PhoneParentRegistered types.PhoneNumber `json:"phoneParentRegistered,omitempty"`
+	// PhoneContact is the emergency contact number the member acknowledged, normalized. Absent
+	// means "not verified" — see the note on omitempty above; it is not a missing field.
+	PhoneContact types.PhoneNumber `json:"phoneContact,omitempty"`
 
-	// VerifiedAt is when the member acknowledged, in UTC.
+	// VerifiedAt is when the member verified, in UTC.
 	//
 	// On the event rather than derived from delivery time, because delivery time changes on
 	// every replay and this timestamp answers "how many members verified before arriving?".

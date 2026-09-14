@@ -30,7 +30,7 @@ type querier struct {
 // silently change what a read returns.
 var vehicleColumns = []any{
 	"vehicleId", "year", "licensePlate", "custodianUserId", "driverUserId",
-	"sectionSlug", "color", "brand", "model", "seatCount", "description",
+	"sectionSlug", "color", "brand", "model", "seatCount", "description", "kind",
 }
 
 func (q *querier) GetByID(ctx context.Context, id types.VehicleID) (*Vehicle, error) {
@@ -43,11 +43,11 @@ func (q *querier) GetByID(ctx context.Context, id types.VehicleID) (*Vehicle, er
 	var v Vehicle
 	err := q.db.QueryRowContext(ctx,
 		`SELECT vehicleId, year, licensePlate, custodianUserId, driverUserId,
-			sectionSlug, color, brand, model, seatCount, description
+			sectionSlug, color, brand, model, seatCount, description, kind
 		 FROM vehicle WHERE vehicleId = ? AND deleted = 0`,
 		string(id),
 	).Scan(&v.VehicleID, &v.YearSlug, &v.LicensePlate, &v.CustodianUserID, &v.DriverUserID,
-		&v.SectionSlug, &v.Color, &v.Brand, &v.Model, &v.SeatCount, &v.Description)
+		&v.SectionSlug, &v.Color, &v.Brand, &v.Model, &v.SeatCount, &v.Description, &v.Kind)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, tables.ErrRecordNotFound
@@ -95,6 +95,9 @@ func (q *querier) allDataset(f Filter) *goqu.SelectDataset {
 	}
 	if f.LicensePlate != "" {
 		where["licensePlate"] = f.LicensePlate
+	}
+	if f.Kind != "" {
+		where["kind"] = string(f.Kind)
 	}
 
 	// Prepared: the filter values travel as placeholders rather than being

@@ -402,3 +402,107 @@ func TestUpdateOnUnprojectedVehiclePublishesAsGiven(t *testing.T) {
 		t.Fatalf("want the event published anyway, got %d", len(pub.Messages))
 	}
 }
+
+// —— kind (car / trailer) ——
+
+// **The test this whole change hangs on.**
+//
+// Every vehicle.registered event on the stream predates `kind`, and projections are
+// rebuilt by replaying the log. If the default lived only in the column definition,
+// this INSERT would name `kind` with an empty value, override that default, and
+// leave every existing car with a blank kind — dropping all of them out of the
+// pickup pool (kind = car AND seatCount > 0) the first time the projection was
+// rebuilt, silently, at boot.
+func TestReplayOfAPreKindEventProducesACar(t *testing.T) {
+	w := &cqrstest.Writer{}
+	con := &consumer{w: w}
+
+	m := cqrstest.NewMessage(cqrs.SubjectFromStr("NATHEJK.2026.vehicle.vehicle-1.registered"))
+	// Exactly the shape of a historical event: no Kind field at all.
+	if err := m.SetBody(&messages.NathejkVehicleRegistered{
+		VehicleID:       "vehicle-1",
+		LicensePlate:    "DK+AB12345",
+		CustodianUserId: "user-1",
+		SeatCount:       4,
+	}); err != nil {
+		t.Fatalf("set body: %v", err)
+	}
+	if err := con.HandleMessage(m); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	stmt := w.Last()
+	if !strings.Contains(stmt, "kind") {
+		t.Fatalf("statement should write the kind column, got %q", stmt)
+	}
+	if !strings.Contains(stmt, `'car'`) {
+		t.Errorf("a pre-kind event must project as a car, got %q", stmt)
+	}
+}
+
+func TestRegisteredTrailerProjectsAsATrailer(t *testing.T) {
+	w := &cqrstest.Writer{}
+	con := &consumer{w: w}
+
+	m := cqrstest.NewMessage(cqrs.SubjectFromStr("NATHEJK.2026.vehicle.vehicle-2.registered"))
+	if err := m.SetBody(&messages.NathejkVehicleRegistered{
+		VehicleID:       "vehicle-2",
+		LicensePlate:    "DK+XY98765",
+		CustodianUserId: "user-1",
+		Kind:            types.VehicleKindTrailer,
+	}); err != nil {
+		t.Fatalf("set body: %v", err)
+	}
+	if err := con.HandleMessage(m); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+	if !strings.Contains(w.Last(), `'trailer'`) {
+		t.Errorf("expected a trailer, got %q", w.Last())
+	}
+}
+
+// A caller that predates trailers cannot register one by accident.
+func TestRegisterDefaultsTheKindToCar(t *testing.T) {
+	c, pub := newTestCommander()
+	if _, err := c.Register(context.Background(), "2026", registerFields()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	var body messages.NathejkVehicleRegistered
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	if body.Kind != types.VehicleKindCar {
+		t.Errorf("kind = %q, want car", body.Kind)
+	}
+}
+
+func TestRegisterCarriesAnExplicitTrailer(t *testing.T) {
+	c, pub := newTestCommander()
+	f := registerFields()
+	f.Kind = types.VehicleKindTrailer
+	if _, err := c.Register(context.Background(), "2026", f); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	var body messages.NathejkVehicleRegistered
+	if err := pub.Messages[0].Body(&body); err != nil {
+		t.Fatalf("body: %v", err)
+	}
+	if body.Kind != types.VehicleKindTrailer {
+		t.Errorf("kind = %q, want trailer", body.Kind)
+	}
+}
+
+// An unknown kind is refused rather than quietly stored: the whole reason the type
+// has a Valid() method is that a value nobody recognises should be detectable at
+// the boundary instead of turning up in a dispatch query later.
+func TestRegisterRefusesAnUnknownKind(t *testing.T) {
+	c, pub := newTestCommander()
+	f := registerFields()
+	f.Kind = "lorry"
+	if _, err := c.Register(context.Background(), "2026", f); err == nil {
+		t.Fatal("expected an error for an unknown kind")
+	}
+	if len(pub.Messages) != 0 {
+		t.Error("nothing should be published for an invalid kind")
+	}
+}

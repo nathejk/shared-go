@@ -39,8 +39,18 @@ type NathejkVehicleRegistered struct {
 	SeatCount uint `json:"seatCount,omitempty"`
 
 	// Description is free-text for anything the structured fields do not cover —
-	// a roof box, a trailer, "only available after midnight", and so on.
+	// a roof box, "only available after midnight", and so on.
+	//
+	// Note what no longer belongs here: a trailer. A trailer is a vehicle in its
+	// own right, with its own registration and its own Kind — not a remark on the
+	// car towing it. A description cannot be queried, so a trailer recorded that
+	// way would be invisible to any count of what is on site.
 	Description string `json:"description,omitempty"`
+
+	// Kind is car or trailer. Omitted means car: every event on the stream from
+	// before this field existed is a car, and the projector defaults it so a
+	// replay produces cars rather than blanks.
+	Kind types.VehicleKind `json:"kind,omitempty"`
 }
 
 // NathejkVehicleUpdated changes an already-registered vehicle. It is a delta:

@@ -36,6 +36,11 @@ type Vehicle struct {
 	SeatCount uint `json:"seatCount" db:"seatCount"`
 
 	Description string `json:"description" db:"description"`
+
+	// Kind is car or trailer. Never empty on a projected row: the projector
+	// defaults it, so a caller can compare it without first having to decide what
+	// a blank means.
+	Kind types.VehicleKind `json:"kind" db:"kind"`
 }
 
 // Filter narrows GetAll. A zero Filter matches every vehicle that has not been
@@ -88,4 +93,11 @@ type Filter struct {
 	// because plates are normalised before they are stored; comparing raw input
 	// would miss "ab 12 345" against "AB12345".
 	LicensePlate string
+
+	// Kind narrows to cars or to trailers. Empty does not filter.
+	//
+	// This is what the pickup pool is built from — `Kind: car` together with a
+	// seat count — and the reason the kind exists at all. A dispatch view that
+	// forgets this filter offers a coordinator a trailer to send after a member.
+	Kind types.VehicleKind
 }

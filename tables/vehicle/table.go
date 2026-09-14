@@ -33,6 +33,15 @@ func New(p cqrs.Publisher, w cqrs.Writer, r cqrs.Reader) *table {
 	if err := w.Consume(t.CreateTableSql()); err != nil {
 		log.Printf("Error creating table %q", err)
 	}
+	// Guarded migration as well as the schema file: CREATE TABLE IF NOT EXISTS is a
+	// no-op wherever a vehicle table already exists, so a column declared only in
+	// table.sql would be missing from every existing database and every projection
+	// statement naming it would be dead-lettered on an unknown column. Same reason
+	// payment does this.
+	if err := cqrs.EnsureColumn(r, w, "vehicle", "kind",
+		`kind VARCHAR(99) NOT NULL DEFAULT "car" AFTER description`); err != nil {
+		log.Printf("Error migrating vehicle.kind %q", err)
+	}
 	return t
 }
 

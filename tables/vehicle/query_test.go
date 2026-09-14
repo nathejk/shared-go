@@ -183,3 +183,23 @@ func contains(args []any, want any) bool {
 	}
 	return false
 }
+
+// The pickup pool is `kind = car AND seatCount > 0`, so this filter is the reason
+// the kind exists: without it a dispatch view offers a coordinator a trailer to
+// send after a member.
+func TestKindFilterNarrowsOnKind(t *testing.T) {
+	got := whereOf(t, Filter{Kind: types.VehicleKindCar})
+	if !strings.Contains(got, "`kind`") {
+		t.Errorf("expected a kind predicate, got:\n%s", got)
+	}
+	if !contains(argsOf(t, Filter{Kind: types.VehicleKindCar}), "car") {
+		t.Error("the kind should travel as an argument")
+	}
+}
+
+func TestEmptyKindDoesNotFilter(t *testing.T) {
+	got := whereOf(t, Filter{})
+	if strings.Contains(got, "`kind`") {
+		t.Errorf("an empty kind must not add a predicate, got:\n%s", got)
+	}
+}

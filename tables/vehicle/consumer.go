@@ -64,7 +64,17 @@ func (c *consumer) HandleMessage(msg cqrs.Message) error {
 			"model":        body.Model,
 			"seatCount":    body.SeatCount,
 			"description":  body.Description,
-			"deleted":      0,
+			// Defaulted **here**, not only by the column's DEFAULT.
+			//
+			// Projections are rebuilt by replaying the log, so every registration
+			// event from before this field existed is re-applied on the next boot.
+			// An INSERT that names `kind` with an empty value overrides the column
+			// default, which would leave those rows with a blank kind — and drop
+			// every existing car out of the pickup pool (kind = car AND seatCount
+			// > 0) the first time the projection was rebuilt. A SQL backfill would
+			// be undone by the next replay; this cannot be.
+			"kind":    string(body.Kind.OrCar()),
+			"deleted": 0,
 		}
 		// driverUserId and sectionSlug are absent from the update clause on
 		// purpose: a re-registration must not undo a driver change or a section
@@ -79,6 +89,7 @@ func (c *consumer) HandleMessage(msg cqrs.Message) error {
 			"model":           goqu.L("VALUES(model)"),
 			"seatCount":       goqu.L("VALUES(seatCount)"),
 			"description":     goqu.L("VALUES(description)"),
+			"kind":            goqu.L("VALUES(kind)"),
 			"deleted":         0,
 		}
 		sqlStr, _, err := dialect.Insert("vehicle").Rows(insert).OnConflict(goqu.DoUpdate("vehicleId", update)).ToSQL()

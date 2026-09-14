@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS vehicle (
     model VARCHAR(99) NOT NULL DEFAULT "",
     seatCount INT NOT NULL DEFAULT 0,
     description TEXT NOT NULL,
+    kind VARCHAR(99) NOT NULL DEFAULT "car",
     deleted TINYINT(1) NOT NULL DEFAULT 0,
     PRIMARY KEY (vehicleId),
     KEY year_driver (year, driverUserId),

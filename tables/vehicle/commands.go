@@ -38,10 +38,15 @@ type RegisterFields struct {
 	Model string
 
 	// SeatCount excludes the driver. Zero for a car brought only for its
-	// owner's own transport, which is not offered for pickups.
+	// owner's own transport, which is not offered for pickups. Meaningless for a
+	// trailer, which is never dispatched whatever it is set to.
 	SeatCount uint
 
 	Description string
+
+	// Kind is car or trailer. Empty means car, so a caller that predates trailers
+	// keeps working and cannot accidentally register one.
+	Kind types.VehicleKind
 }
 
 // UpdateFields is the editable slice of a vehicle carried by Update.
@@ -126,6 +131,10 @@ func (c commander) Register(ctx context.Context, year types.YearSlug, f Register
 	if f.CustodianUserID == "" {
 		return "", errors.New("custodian is required: somebody has to answer for the vehicle")
 	}
+	kind := f.Kind.OrCar()
+	if !kind.Valid() {
+		return "", fmt.Errorf("invalid vehicle kind %q", f.Kind)
+	}
 	vehicleID := types.VehicleID("").New()
 	body := messages.NathejkVehicleRegistered{
 		VehicleID:       vehicleID,
@@ -136,6 +145,7 @@ func (c commander) Register(ctx context.Context, year types.YearSlug, f Register
 		Model:           f.Model,
 		SeatCount:       f.SeatCount,
 		Description:     f.Description,
+		Kind:            kind,
 	}
 	msg := c.p.MessageFunc()(c.subject(year, vehicleID, "registered"))
 	msg.SetBody(&body)

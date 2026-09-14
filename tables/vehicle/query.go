@@ -63,6 +63,20 @@ func (q *querier) GetAll(ctx context.Context, f Filter) ([]Vehicle, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
+	vehicles := []Vehicle{}
+	if err := q.allDataset(f).ScanStructsContext(ctx, &vehicles); err != nil {
+		return nil, err
+	}
+	return vehicles, nil
+}
+
+// allDataset builds GetAll's query.
+//
+// Split out from GetAll so the generated SQL can be asserted without a database,
+// the way payment's query side does it: the filter fields are the part with rules
+// worth pinning down — which of them narrow, which override each other, and
+// which must travel as placeholders rather than be interpolated.
+func (q *querier) allDataset(f Filter) *goqu.SelectDataset {
 	where := goqu.Ex{"deleted": 0}
 	if f.YearSlug != "" {
 		where["year"] = string(f.YearSlug)
@@ -74,23 +88,32 @@ func (q *querier) GetAll(ctx context.Context, f Filter) ([]Vehicle, error) {
 		where["sectionSlug"] = ""
 	}
 	if len(f.DriverUserIDs) > 0 {
-		ids := make([]string, 0, len(f.DriverUserIDs))
-		for _, id := range f.DriverUserIDs {
-			ids = append(ids, string(id))
-		}
-		where["driverUserId"] = ids
+		where["driverUserId"] = userIDStrings(f.DriverUserIDs)
+	}
+	if len(f.CustodianUserIDs) > 0 {
+		where["custodianUserId"] = userIDStrings(f.CustodianUserIDs)
 	}
 
-	vehicles := []Vehicle{}
-	err := q.r.From("vehicle").
+	// Prepared: the filter values travel as placeholders rather than being
+	// interpolated into the statement. GetByID has always used placeholders via
+	// QueryRowContext; this side had not, and it now takes a value derived from a
+	// caller's session, with a section slug and a plate plausibly arriving from a
+	// request too.
+	return q.r.From("vehicle").
+		Prepared(true).
 		Select(vehicleColumns...).
 		Where(where).
-		Order(goqu.I("licensePlate").Asc()).
-		ScanStructsContext(ctx, &vehicles)
-	if err != nil {
-		return nil, err
+		Order(goqu.I("licensePlate").Asc())
+}
+
+// userIDStrings converts ids for goqu, which takes a []string as an IN list but
+// does not know what to do with a slice of a named string type.
+func userIDStrings(ids []types.UserID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, string(id))
 	}
-	return vehicles, nil
+	return out
 }
 
 var _ Queries = (*querier)(nil)

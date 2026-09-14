@@ -61,4 +61,19 @@ type Filter struct {
 	// An empty slice does not filter; it is not the same as asking for
 	// vehicles with no driver.
 	DriverUserIDs []types.UserID
+
+	// CustodianUserIDs matches vehicles these people answer for — the question
+	// "whose vehicles are these", which is what a person asking after their own
+	// registrations means.
+	//
+	// Deliberately separate from DriverUserIDs, and not interchangeable with it.
+	// The driver moves as the keys are handed on, so filtering a person's own
+	// vehicles by driver would drop a car the moment they lent it out for a
+	// pickup, and show it under the borrower instead — who must not be able to
+	// edit or withdraw somebody else's registration. Custodianship is the stable
+	// fact and the one an owner means.
+	//
+	// An empty slice does not filter; it is not the same as asking for vehicles
+	// with no custodian.
+	CustodianUserIDs []types.UserID
 }
